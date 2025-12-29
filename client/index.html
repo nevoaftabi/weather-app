@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather App</title>
+    <script defer src="index.js"></script>
+</head>
+<body>
+    <form id="weather" action="" onsubmit="return submitForm(event)">
+        <label for="">City</label>
+        <input id="city" type="text">
+        <br>
+        <label for="">State</label>
+        <input id="state" type="text">
+        <br>
+        <br>
+        <div>
+            <span id="result"></span>
+            <br>
+            <span id="weather-condition"></span>
+        </div>
+
+        <br>
+        <br>
+        <button type="submit">Submit</button>
+    </form>
+    <script>
+        async function submitForm(event) {
+            event.preventDefault();
+            await getDataAndCall();
+            return false; // prevents actual form submit
+        }
+    </script>
+</body>
+</html>
