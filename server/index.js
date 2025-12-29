@@ -1,10 +1,23 @@
 // NOTE: Old API key should expire soon. Use the new old.
 
 const express = require("express");
+const rateLimit = require('express-rate-limit');
 require("dotenv").config();
 const cors = require("cors");
 
 const cache = new Map();
+const { PORT, WEATHER_API_KEY } = process.env;
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 1000,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: (_, res) => {
+    res.status(429).json({ error: "Too many requests. Try again later." });
+  },
+});
+
 
 function cacheGet(key) {
   const entry = cache.get(key);
@@ -24,7 +37,6 @@ function cacheSet(key, value, ttlMs) {
   cache.set(key, { value, expiresAt: Date.now() + ttlMs });
 }
 
-const { PORT, WEATHER_API_KEY } = process.env;
 const app = express();
 
 app.use((req, res, next) => {
@@ -35,6 +47,9 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: "http://127.0.0.1:5500",
 }));
+
+app.use(apiLimiter);
+
 
 app.get("/api/weather", async (req, res) => {
   try {
@@ -89,7 +104,7 @@ app.get("/api/weather", async (req, res) => {
       icon: weather.weather[0].icon,
       wind: weather.wind.speed
     };
-    // 10 minutes
+    
     cacheSet(cacheKey, weatherShape, 10 * 60 * 1000);
     
     return res.json({ ...weatherShape });
