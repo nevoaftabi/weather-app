@@ -13,7 +13,3 @@ export const env = {
   PORT: requireEnv("PORT"),
   WEATHER_API_KEY: requireEnv("WEATHER_API_KEY"),
 };
-
-if (!env.WEATHER_API_KEY) {
-  throw new Error("Missing WEATHER_API_KEY");
-}

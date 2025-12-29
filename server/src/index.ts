@@ -1,14 +1,9 @@
 import express, { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
-import dotenv from "dotenv";
 import cors from "cors";
-import { cacheGet, WeatherApiResponse, GeoResult, WeatherShape, cacheSet, getWeather, Units } from './services/weatherApi';
+import { getWeather } from './services/weatherApi';
 import { HttpError } from "./HttpError";
 import { env } from './config/env';
-
-if (!env.WEATHER_API_KEY || !env.PORT) {
-  throw new Error("Missing WEATHER_API_KEY in .env");
-}
 
 const app = express();
 app.use(cors({ origin: "http://127.0.0.1:5500" }));
@@ -30,15 +25,18 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
-// ----- Route -----
 app.get("/api/weather", async (req: Request, res: Response) => {
   try {
     const city = String(req.query.city ?? "").toLowerCase().trim();
     const state = String(req.query.state ?? "").toLowerCase().trim();
     const units = String(req.query.units ?? "").toLowerCase().trim();
 
-    if (!city || !state || !units) {
+    if (!city || !state) {
       return res.status(400).json({ error: "Provide city and state" });
+    }
+
+    if(units !== 'metric' && units !== 'imperial') {
+      return res.status(400).json({ error: "Invalid units. Use 'metric' or 'imperial'."});
     }
 
     const data = await getWeather(env.WEATHER_API_KEY, city, state, units);

@@ -1,7 +1,7 @@
 export type Units = "metric" | "imperial";
 import { HttpError } from "../HttpError";
 
-export type GeoResult = {
+type GeoResult = {
   name: string;
   lat: number;
   lon: number;
@@ -9,7 +9,7 @@ export type GeoResult = {
   state?: string;
 };
 
-export type WeatherApiResponse = {
+type WeatherApiResponse = {
   main: {
     temp: number;
     feels_like: number;
@@ -23,7 +23,7 @@ export type WeatherApiResponse = {
   };
 };
 
-export type WeatherShape = {
+type WeatherShape = {
   location: string;
   temp: number;
   feelsLike: number;
@@ -33,16 +33,14 @@ export type WeatherShape = {
 };
 
 // ----- Cache (TTL) -----
-export type CacheEntry<T> = {
+type CacheEntry<T> = {
   value: T;
   expiresAt: number;
 };
 
 const cache = new Map<string, CacheEntry<WeatherShape>>();
 
-const { WEATHER_API_KEY } = process.env;
-
-export function cacheGet(key: string): WeatherShape | null {
+function cacheGet(key: string): WeatherShape | null {
   const entry = cache.get(key);
   if (!entry) return null;
 
@@ -54,11 +52,11 @@ export function cacheGet(key: string): WeatherShape | null {
   return entry.value;
 }
 
-export function cacheSet(key: string, value: WeatherShape, ttlMs: number): void {
+function cacheSet(key: string, value: WeatherShape, ttlMs: number): void {
   cache.set(key, { value, expiresAt: Date.now() + ttlMs });
 }
  
-export async function getWeather(apiKey: string, city: string, state: string, units: string): Promise<WeatherShape> {
+export async function getWeather(apiKey: string, city: string, state: string, units: Units): Promise<WeatherShape> {
   const cacheKey = `wx:${city},${state},us:${units}`;
   const cached = cacheGet(cacheKey);
 
