@@ -10,6 +10,7 @@
     <form id="weather" action="" onsubmit="return submitForm(event)">
         <label for="">City</label>
         <input id="city" type="text">
+        <button type="buttton" id="units">Metric</button>
         <br>
         <label for="">State</label>
         <input id="state" type="text">
@@ -30,6 +31,17 @@
             event.preventDefault();
             await getDataAndCall();
             return false; // prevents actual form submit
+        }
+
+        document.getElementById("units").addEventListener("click", (e) => {
+            e.preventDefault();
+            changeUnits();
+        });
+
+        function changeUnits(e) {
+            e?.preventDefault?.();
+            const unitEl = document.getElementById("units");
+            unitEl.textContent = unitEl.textContent === "Metric" ? "Imperial" : "Metric";
         }
     </script>
 </body>
