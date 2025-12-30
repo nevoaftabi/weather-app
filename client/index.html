@@ -1,48 +1,134 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Weather App</title>
-    <script defer src="index.js"></script>
-</head>
-<body>
-    <form id="weather" action="" onsubmit="return submitForm(event)">
-        <label for="">City</label>
-        <input id="city" type="text">
-        <button type="buttton" id="units">Metric</button>
-        <br>
-        <label for="">State</label>
-        <input id="state" type="text">
-        <br>
-        <br>
-        <div>
-            <span id="result"></span>
-            <br>
-            <span id="weather-condition"></span>
+
+    <link rel="stylesheet" href="./dist/output.css" />
+    <script defer src="./src/index.js"></script>
+  </head>
+
+  <body class="min-h-screen bg-slate-950 text-slate-100">
+    <main class="mx-auto flex min-h-screen max-w-3xl items-center px-4 py-12">
+      <div class="w-full">
+        <!-- Header -->
+        <div class="mb-8">
+          <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
+            Weather App
+          </h1>
+          <p class="mt-2 text-sm text-slate-300">
+            Enter a city and state, then choose Metric or Imperial.
+          </p>
         </div>
 
-        <br>
-        <br>
-        <button type="submit">Submit</button>
-    </form>
+        <!-- Card -->
+        <section class="rounded-2xl border border-white/10 bg-white/5 p-5 shadow-lg backdrop-blur sm:p-7">
+          <form id="weather" action="" onsubmit="return submitForm(event)" class="space-y-6">
+            <!-- Inputs -->
+            <div class="grid gap-4 sm:grid-cols-2">
+              <div class="space-y-2">
+                <label for="city" class="text-sm font-medium text-slate-200">City</label>
+                <input
+                  required
+                  id="city"
+                  minlength="2"
+                  maxlength="80"
+                  type="text"
+                  placeholder="Miami"
+                  autocomplete="address-level2"
+                  class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-slate-100 placeholder:text-slate-400 outline-none ring-0 transition focus:border-white/20 focus:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                />
+              </div>
+
+              <div class="space-y-2">
+                <label for="state" class="text-sm font-medium text-slate-200">State</label>
+                <input
+                  maxlength="2"
+                  minlength="2"
+                  required
+                  id="state"
+                  type="text"
+                  placeholder="FL"
+                  autocomplete="address-level1"
+                  class="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-slate-100 placeholder:text-slate-400 outline-none ring-0 transition focus:border-white/20 focus:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                />
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex items-center gap-3">
+                <button
+                  type="button"
+                  id="units"
+                  data-units="metric"
+                  class="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                  aria-label="Toggle units"
+                >
+                  Metric
+                </button>
+
+                <span class="text-xs text-slate-400">
+                  Toggle units before submitting
+                </span>
+              </div>
+
+              <button
+                type="submit"
+                class="inline-flex items-center justify-center rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+              >
+                Get weather
+              </button>
+            </div>
+
+            <!-- Results -->
+            <div class="rounded-xl border border-white/10 bg-black/20 p-4">
+              <div class="text-xs uppercase tracking-wide text-slate-400">
+                Result
+              </div>
+
+              <div class="mt-2 space-y-1">
+                <div id="result" class="text-lg font-semibold text-slate-100">
+                  <!-- temp goes here -->
+                </div>
+                <div id="weather-condition" class="text-sm text-slate-300">
+                  <!-- condition goes here -->
+                </div>
+              </div>
+            </div>
+
+            <!-- Small hint / error area (optional) -->
+            <p class="text-xs text-slate-400">
+              Tip: Use state abbreviations like FL, NY, CA.
+            </p>
+          </form>
+        </section>
+
+        <!-- Footer -->
+        <p class="mt-6 text-center text-xs text-slate-500">
+          Built with vanilla JS + Tailwind
+        </p>
+      </div>
+    </main>
+
     <script>
-        async function submitForm(event) {
-            event.preventDefault();
-            await getDataAndCall();
-            return false; // prevents actual form submit
-        }
+      async function submitForm(event) {
+        event.preventDefault();
+        await getDataAndCall();
+        return false;
+      }
 
-        document.getElementById("units").addEventListener("click", (e) => {
-            e.preventDefault();
-            changeUnits();
-        });
+      document.getElementById("units").addEventListener("click", (e) => {
+        e.preventDefault();
+        changeUnits();
+      });
 
-        function changeUnits(e) {
-            e?.preventDefault?.();
-            const unitEl = document.getElementById("units");
-            unitEl.textContent = unitEl.textContent === "Metric" ? "Imperial" : "Metric";
-        }
+    function changeUnits() {
+    const unitEl = document.getElementById("units");
+    const current = unitEl.textContent.trim(); // key change
+    unitEl.textContent = current === "Metric" ? "Imperial" : "Metric";
+    }
     </script>
-</body>
+  </body>
 </html>

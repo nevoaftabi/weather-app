@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
-import { getWeather } from './services/weatherApi';
+import { getWeather, Units } from './services/weatherApi';
 import { HttpError } from "./HttpError";
 import { env } from './config/env';
 
@@ -25,19 +25,31 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
+function parseUnits(raw: unknown): Units {
+  const u = String(raw ?? "metric").trim().toLowerCase();
+  if (u === "metric" || u === "imperial") return u;
+  throw new HttpError(400, "Invalid units. Use 'metric' or 'imperial'.");
+}
+
+function requireString(raw: unknown, fieldName: string): string {
+  const v = String(raw ?? "").trim();
+  if (!v) throw new HttpError(400, `${fieldName} is required.`);
+  return v;
+}
+
+function parseState(raw: unknown): string {
+  const state = requireString(raw, "state").toUpperCase();
+  if (!/^[A-Z]{2}$/.test(state)) {
+    throw new HttpError(400, "state must be a 2-letter code (e.g., TX).");
+  }
+  return state;
+}
+
 app.get("/api/weather", async (req: Request, res: Response) => {
   try {
-    const city = String(req.query.city ?? "").toLowerCase().trim();
-    const state = String(req.query.state ?? "").toLowerCase().trim();
-    const units = String(req.query.units ?? "").toLowerCase().trim();
-
-    if (!city || !state) {
-      return res.status(400).json({ error: "Provide city and state" });
-    }
-
-    if(units !== 'metric' && units !== 'imperial') {
-      return res.status(400).json({ error: "Invalid units. Use 'metric' or 'imperial'."});
-    }
+    const city = requireString(req.query.city, "city");
+    const state = parseState(req.query.state);
+    const units = parseUnits(req.query.units);
 
     const data = await getWeather(env.WEATHER_API_KEY, city, state, units);
     return res.json(data);
