@@ -1,13 +1,14 @@
 import express, { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
-import { getWeather, Units } from './services/weatherApi';
+import { WeatherApi, Units } from './services/weatherApi';
 import { HttpError } from "./HttpError";
 import { env } from './config/env';
 
 const app = express();
+const weatherApi = new WeatherApi();
 app.use(cors({ origin: "http://127.0.0.1:5500" }));
-
+ 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 1000,
@@ -43,15 +44,17 @@ function parseState(raw: unknown): string {
     throw new HttpError(400, "state must be a 2-letter code (e.g., TX).");
   }
   return state;
-}
+} 
 
 app.get("/api/weather", async (req: Request, res: Response) => {
   try {
+    await weatherApi.init();
+
     const city = requireString(req.query.city, "city");
     const state = parseState(req.query.state);
     const units = parseUnits(req.query.units);
 
-    const data = await getWeather(env.WEATHER_API_KEY, city, state, units);
+    const data = await weatherApi.getWeather(env.WEATHER_API_KEY, city, state, units);
     return res.json(data);
   } 
   catch (err) {

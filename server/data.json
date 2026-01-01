@@ -1,0 +1,12 @@
+[
+  {
+    "key": "wx:dallas,tx,us:metric",
+    "location": "Dallas, Texas",
+    "temp": 10.46,
+    "feelsLike": 9.13,
+    "condition": "broken clouds",
+    "icon": "04d",
+    "wind": 0.89,
+    "expiresAt": 1767280332538
+  }
+]
