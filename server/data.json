@@ -1,12 +1,22 @@
 [
   {
-    "key": "wx:dallas,tx,us:metric",
-    "location": "Dallas, Texas",
-    "temp": 10.46,
-    "feelsLike": 9.13,
-    "condition": "broken clouds",
-    "icon": "04d",
-    "wind": 0.89,
-    "expiresAt": 1767280332538
+    "key": "wx:austin,tx,us:metric",
+    "location": "Austin, Texas",
+    "temp": 22.06,
+    "feelsLike": 21.29,
+    "condition": "clear sky",
+    "icon": "01d",
+    "wind": 5.66,
+    "expiresAt": 1767306949946
+  },
+  {
+    "key": "wx:miami,fl,us:metric",
+    "location": "Miami, Florida",
+    "temp": 18.5,
+    "feelsLike": 17.82,
+    "condition": "few clouds",
+    "icon": "02d",
+    "wind": 3.6,
+    "expiresAt": 1767306971259
   }
 ]

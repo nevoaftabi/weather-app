@@ -22,7 +22,7 @@ const apiLimiter = rateLimit({
 app.use(apiLimiter);
 
 app.use((req: Request, _res: Response, next: NextFunction) => {
-  console.log(`${req.method} - ${req.url}`);
+  console.log(`[ROUTER] ${req.method} ${req.url}`);
   next();
 });
 
@@ -48,8 +48,6 @@ function parseState(raw: unknown): string {
 
 app.get("/api/weather", async (req: Request, res: Response) => {
   try {
-    await weatherApi.init();
-
     const city = requireString(req.query.city, "city");
     const state = parseState(req.query.state);
     const units = parseUnits(req.query.units);

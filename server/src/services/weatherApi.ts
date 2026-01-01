@@ -4,8 +4,9 @@ import { HttpError } from "../HttpError";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+// What the API returns to the client (nice clean object)
 type WeatherShape = {
-  location: string;     // human-readable (e.g., "Miami, Florida")
+  location: string; // human-readable (e.g., "Miami, Florida")
   temp: number;
   feelsLike: number;
   condition: string;
@@ -13,15 +14,16 @@ type WeatherShape = {
   wind: number;
 };
 
+// wraps WeatherShape with expiresAt
 type CacheEntry<T> = {
   value: T;
-  expiresAt: number;    // absolute timestamp (ms since epoch)
+  expiresAt: number; // absolute timestamp (ms since epoch)
 };
 
-// In your file, `location` is the CACHE KEY (e.g., "wx:miami,fl,us:metric")
+// What you store on disk (key + WeatherShape + expiresAt)
 type PersistedWeather = WeatherShape & {
-  key: string;        // cache key like "wx:miami,fl,us:metric"
-  expiresAt: number;  // absolute timestamp
+  key: string; // cache key like "wx:miami,fl,us:metric"
+  expiresAt: number; // absolute timestamp
 };
 
 type GeoResult = {
@@ -41,17 +43,12 @@ type WeatherApiResponse = {
 export class WeatherApi {
   private cache = new Map<string, CacheEntry<WeatherShape>>();
   private initialized = false;
-  private initError: string | null = null;
 
   // data.json in project root (where you run `node` from)
   private filePath = path.join(process.cwd(), "data.json");
 
   // Prevent writing on every request (optional, but helpful)
   private saveTimer: NodeJS.Timeout | null = null;
-
-  getInitError() {
-    return this.initError;
-  }
 
   private cacheGet(key: string): WeatherShape | null {
     const entry = this.cache.get(key);
@@ -83,19 +80,19 @@ export class WeatherApi {
     }, delayMs);
   }
 
-private async saveCacheToFile() {
-  const items: PersistedWeather[] = [];
+  private async saveCacheToFile() {
+    const items: PersistedWeather[] = [];
 
-  for (const [cacheKey, entry] of this.cache.entries()) {
-    items.push({
-      key: cacheKey,
-      ...entry.value,          // keeps human-readable location
-      expiresAt: entry.expiresAt,
-    });
+    for (const [cacheKey, entry] of this.cache.entries()) {
+      items.push({
+        key: cacheKey,
+        ...entry.value, // keeps human-readable location
+        expiresAt: entry.expiresAt,
+      });
+    }
+
+    await writeFile(this.filePath, JSON.stringify(items, null, 2), "utf8");
   }
-
-  await writeFile(this.filePath, JSON.stringify(items, null, 2), "utf8");
-}
 
   async init() {
     if (this.initialized) return;
@@ -103,14 +100,11 @@ private async saveCacheToFile() {
     try {
       const text = await readFile(this.filePath, "utf8");
       const items = JSON.parse(text) as PersistedWeather[];
-      if (!Array.isArray(items)) {
-        this.initError = "Cache file invalid (expected an array).";
-        this.initialized = true;
-        return;
-      }
+
+      if (!Array.isArray(items))
+        throw new Error("Cache file invalid (expected array)");
 
       const now = Date.now();
-
       for (const item of items) {
         if (!item?.key || typeof item.expiresAt !== "number") continue;
         if (item.expiresAt <= now) continue;
@@ -118,39 +112,52 @@ private async saveCacheToFile() {
         const { key, expiresAt, ...value } = item;
         this.cache.set(key, { value, expiresAt });
       }
-      this.initError = null;
-      this.initialized = true;
-    } catch (error: any) {
-      // Missing file: ok, start empty cache
-      if (error?.code === "ENOENT") {
-        this.initError = null;
-        this.initialized = true;
-        return;
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        console.error("[WeatherApi] cache load failed:", err);
       }
-
-      // Other issues: don't crash, mark degraded
-      console.error("Failed to load data.json:", error);
-      this.initError = "Failed to load cache file (data.json).";
+    } finally {
       this.initialized = true;
     }
   }
 
-  async getWeather(apiKey: string, city: string, state: string, units: Units): Promise<WeatherShape> {
+  private logCacheResult(
+    cacheKey: string,
+    entry: CacheEntry<WeatherShape> | undefined
+  ) {
+    if (!entry) {
+      console.log(`[WeatherApi][CACHE MISS] key="${cacheKey}"`);
+      return;
+    }
+
+    const msLeft = entry.expiresAt - Date.now();
+    const secLeft = Math.max(0, Math.floor(msLeft / 1000));
+
+    console.log(
+      `[WeatherApi][CACHE HIT] key="${cacheKey}" ` +
+        `expiresIn=${secLeft}s ` +
+        `valueLocation="${entry.value.location}"`
+    );
+  }
+
+  async getWeather(
+    apiKey: string,
+    city: string,
+    state: string,
+    units: Units
+  ): Promise<WeatherShape> {
     // ensure cache is loaded at least once (safe if called multiple times)
     await this.init();
 
     // if you want to block service when cache file is corrupt/unreadable (except missing),
     // your route can call getInitError() and return 503. We won't throw here.
-
+    // wx = shorthand for 'weather'. Useful for preventing collisions.
     const cacheKey = `wx:${city},${state},us:${units}`.toLowerCase();
+    const entry = this.cache.get(cacheKey);
+    this.logCacheResult(cacheKey, entry);
+
     const cached = this.cacheGet(cacheKey);
-
-    if (cached) {
-      console.log("Returning cached value");
-      return cached;
-    }
-
-    console.log("Making a request");
+    if (cached) return cached;
 
     const geoUrl =
       `https://api.openweathermap.org/geo/1.0/direct` +
@@ -161,7 +168,8 @@ private async saveCacheToFile() {
     if (!geoRes.ok) throw new HttpError(502, "Geocode failed");
 
     const geo = (await geoRes.json()) as GeoResult[];
-    if (!Array.isArray(geo) || geo.length === 0) throw new HttpError(404, "Location not found");
+    if (!Array.isArray(geo) || geo.length === 0)
+      throw new HttpError(404, "Location not found");
 
     const { lat, lon, name } = geo[0];
     const stateName = geo[0].state ?? state;
