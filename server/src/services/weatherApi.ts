@@ -1,29 +1,16 @@
+import { HttpError } from "../HttpError";
+import { cacheGetJson, cacheSetJson } from "../cache";
+import { env } from "../config/env";
+
 export type Units = "metric" | "imperial";
 
-import { HttpError } from "../HttpError";
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-
-// What the API returns to the client (nice clean object)
 type WeatherShape = {
-  location: string; // human-readable (e.g., "Miami, Florida")
+  location: string;
   temp: number;
   feelsLike: number;
   condition: string;
   icon: string;
   wind: number;
-};
-
-// wraps WeatherShape with expiresAt
-type CacheEntry<T> = {
-  value: T;
-  expiresAt: number; // absolute timestamp (ms since epoch)
-};
-
-// What you store on disk (key + WeatherShape + expiresAt)
-type PersistedWeather = WeatherShape & {
-  key: string; // cache key like "wx:miami,fl,us:metric"
-  expiresAt: number; // absolute timestamp
 };
 
 type GeoResult = {
@@ -41,103 +28,8 @@ type WeatherApiResponse = {
 };
 
 export class WeatherApi {
-  private cache = new Map<string, CacheEntry<WeatherShape>>();
-  private initialized = false;
-
-  // data.json in project root (where you run `node` from)
-  private filePath = path.join(process.cwd(), "data.json");
-
-  // Prevent writing on every request (optional, but helpful)
-  private saveTimer: NodeJS.Timeout | null = null;
-
-  private cacheGet(key: string): WeatherShape | null {
-    const entry = this.cache.get(key);
-    if (!entry) return null;
-
-    if (Date.now() > entry.expiresAt) {
-      this.cache.delete(key);
-      return null;
-    }
-
-    return entry.value;
-  }
-
-  private cacheSet(key: string, value: WeatherShape, ttlMs: number): void {
-    this.cache.set(key, { value, expiresAt: Date.now() + ttlMs });
-    this.scheduleSave(); // persist after updates
-  }
-
-  private scheduleSave(delayMs = 250) {
-    if (this.saveTimer) return;
-    this.saveTimer = setTimeout(async () => {
-      this.saveTimer = null;
-      try {
-        await this.saveCacheToFile();
-      } catch (e) {
-        // Don't crash if file write fails. Just log it.
-        console.error("Failed to persist cache to data.json:", e);
-      }
-    }, delayMs);
-  }
-
-  private async saveCacheToFile() {
-    const items: PersistedWeather[] = [];
-
-    for (const [cacheKey, entry] of this.cache.entries()) {
-      items.push({
-        key: cacheKey,
-        ...entry.value, // keeps human-readable location
-        expiresAt: entry.expiresAt,
-      });
-    }
-
-    await writeFile(this.filePath, JSON.stringify(items, null, 2), "utf8");
-  }
-
-  async init() {
-    if (this.initialized) return;
-
-    try {
-      const text = await readFile(this.filePath, "utf8");
-      const items = JSON.parse(text) as PersistedWeather[];
-
-      if (!Array.isArray(items))
-        throw new Error("Cache file invalid (expected array)");
-
-      const now = Date.now();
-      for (const item of items) {
-        if (!item?.key || typeof item.expiresAt !== "number") continue;
-        if (item.expiresAt <= now) continue;
-
-        const { key, expiresAt, ...value } = item;
-        this.cache.set(key, { value, expiresAt });
-      }
-    } catch (err: any) {
-      if (err?.code !== "ENOENT") {
-        console.error("[WeatherApi] cache load failed:", err);
-      }
-    } finally {
-      this.initialized = true;
-    }
-  }
-
-  private logCacheResult(
-    cacheKey: string,
-    entry: CacheEntry<WeatherShape> | undefined
-  ) {
-    if (!entry) {
-      console.log(`[WeatherApi][CACHE MISS] key="${cacheKey}"`);
-      return;
-    }
-
-    const msLeft = entry.expiresAt - Date.now();
-    const secLeft = Math.max(0, Math.floor(msLeft / 1000));
-
-    console.log(
-      `[WeatherApi][CACHE HIT] key="${cacheKey}" ` +
-        `expiresIn=${secLeft}s ` +
-        `valueLocation="${entry.value.location}"`
-    );
+  private makeKey(city: string, state: string, units: Units) {
+    return `wx:${city},${state},us:${units}`.toLowerCase();
   }
 
   async getWeather(
@@ -146,19 +38,13 @@ export class WeatherApi {
     state: string,
     units: Units
   ): Promise<WeatherShape> {
-    // ensure cache is loaded at least once (safe if called multiple times)
-    await this.init();
+    const cacheKey = this.makeKey(city, state, units);
 
-    // if you want to block service when cache file is corrupt/unreadable (except missing),
-    // your route can call getInitError() and return 503. We won't throw here.
-    // wx = shorthand for 'weather'. Useful for preventing collisions.
-    const cacheKey = `wx:${city},${state},us:${units}`.toLowerCase();
-    const entry = this.cache.get(cacheKey);
-    this.logCacheResult(cacheKey, entry);
-
-    const cached = this.cacheGet(cacheKey);
+    // 1) Redis cache
+    const cached = await cacheGetJson<WeatherShape>(cacheKey);
     if (cached) return cached;
 
+    // 2) Fetch geo
     const geoUrl =
       `https://api.openweathermap.org/geo/1.0/direct` +
       `?q=${encodeURIComponent(city)},${encodeURIComponent(state)},US` +
@@ -174,6 +60,7 @@ export class WeatherApi {
     const { lat, lon, name } = geo[0];
     const stateName = geo[0].state ?? state;
 
+    // 3) Fetch weather
     const weatherUrl =
       `https://api.openweathermap.org/data/2.5/weather` +
       `?lat=${lat}&lon=${lon}&appid=${apiKey}&units=${units}`;
@@ -192,7 +79,9 @@ export class WeatherApi {
       wind: weather.wind.speed,
     };
 
-    this.cacheSet(cacheKey, weatherShape, 10 * 60 * 1000);
+    // 4) Write to Redis with TTL
+    await cacheSetJson(cacheKey, weatherShape, env.WEATHER_TTL_SECONDS);
+
     return weatherShape;
   }
 }

@@ -1,14 +1,16 @@
 import express, { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import cors from "cors";
-import { WeatherApi, Units } from './services/weatherApi';
+import { WeatherApi, Units } from "./services/weatherApi";
 import { HttpError } from "./HttpError";
-import { env } from './config/env';
+import { env } from "./config/env";
+import { connectRedis } from "./redis";
 
 const app = express();
 const weatherApi = new WeatherApi();
+
 app.use(cors({ origin: ["http://127.0.0.1:5173", "http://localhost:5173"] }));
- 
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 1000,
@@ -31,7 +33,7 @@ function parseUnits(raw: unknown): Units {
   if (u === "metric" || u === "imperial") return u;
   throw new HttpError(400, "Invalid units. Use 'metric' or 'imperial'.");
 }
-
+ 
 function requireString(raw: unknown, fieldName: string): string {
   const v = String(raw ?? "").trim();
   if (!v) throw new HttpError(400, `${fieldName} is required.`);
@@ -44,7 +46,7 @@ function parseState(raw: unknown): string {
     throw new HttpError(400, "state must be a 2-letter code (e.g., TX).");
   }
   return state;
-} 
+}
 
 app.get("/api/weather", async (req: Request, res: Response) => {
   try {
@@ -54,17 +56,24 @@ app.get("/api/weather", async (req: Request, res: Response) => {
 
     const data = await weatherApi.getWeather(env.WEATHER_API_KEY, city, state, units);
     return res.json(data);
-  } 
-  catch (err) {
-    if(err instanceof HttpError) {
+  } catch (err) {
+    if (err instanceof HttpError) {
       return res.status(err.status).json({ error: err.message });
     }
-
     console.error(err);
     return res.status(500).json({ error: "Server error" });
   }
 });
 
-app.listen(env.PORT, () => {
-  console.log(`Listening on port ${env.PORT}`);
+async function start() {
+  await connectRedis(); // connect before accepting requests
+
+  app.listen(Number(env.PORT), () => {
+    console.log(`Listening on port ${env.PORT}`);
+  });
+}
+
+start().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
 });
