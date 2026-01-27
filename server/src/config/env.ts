@@ -22,4 +22,10 @@ export const env = {
   WEATHER_API_KEY: requireEnv("WEATHER_API_KEY"),
   REDIS_URL: requireEnv("REDIS_URL"),
   WEATHER_TTL_SECONDS: intOr("WEATHER_TTL_SECONDS", 600),
+  ACCESS_SECRET: requireEnv("ACCESS_SECRET"),
+  REFRESH_SECRET: requireEnv("REFRESH_SECRET"),
+  ACCESS_EXPIRES: requireEnv("ACCESS_EXPIRES"),
+  REFRESH_DAYS: requireEnv("REFRESH_DAYS"),
+  DATABASE_URL: requireEnv("DATABASE_URL"),
+  NODE_ENV: requireEnv("NODE_ENV")
 };
