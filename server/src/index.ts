@@ -14,7 +14,7 @@ import { connectRedis } from "./redis";
 
 import { pool } from "./db";
 import { newRefreshToken, sha256 } from "./tokens";
-import { sendVerificationEmail } from "./services/verificationEmail";
+import { sendPasswordResetEmail, sendVerificationEmail } from "./services/verificationEmail";
 
 const app = express();
 const weatherApi = new WeatherApi();
@@ -86,6 +86,21 @@ type VerifyEmailBody = {
   code?: unknown;
 };
 
+type RequestPasswordResetBody = {
+  email?: unknown;
+};
+
+type ResetPasswordBody = {
+  email?: unknown;
+  code?: unknown;
+  newPassword?: unknown;
+};
+
+type ChangeEmailBody = {
+  newEmail?: unknown;
+  currentPassword?: unknown;
+};
+
 type AccessTokenClaims = jwt.JwtPayload & {
   sub: string;
   email: string;
@@ -134,6 +149,44 @@ const verifyEmailSchema = z.object({
   code: z.preprocess(
     (raw) => String(raw ?? "").trim(),
     z.string().regex(/^\d{6}$/, "Verification code must be 6 digits.")
+  ),
+});
+
+const requestPasswordResetSchema = z.object({
+  email: z.preprocess(
+    (raw) => String(raw ?? "").trim().toLowerCase(),
+    z.string().min(1, "email is required.")
+  ),
+});
+
+const resetPasswordSchema = z.object({
+  email: z.preprocess(
+    (raw) => String(raw ?? "").trim().toLowerCase(),
+    z.string().min(1, "email is required.")
+  ),
+  code: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z.string().regex(/^\d{6}$/, "Verification code must be 6 digits.")
+  ),
+  newPassword: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z
+      .string()
+      .min(8, "Password must be at least 8 characters.")
+      .regex(/[A-Z]/, "Password must contain at least 1 uppercase letter.")
+      .regex(/[a-z]/, "Password must contain at least 1 lowercase letter.")
+      .regex(/[0-9]/, "Password must contain at least 1 number.")
+  ),
+});
+
+const changeEmailSchema = z.object({
+  newEmail: z.preprocess(
+    (raw) => String(raw ?? "").trim().toLowerCase(),
+    z.string().email("Enter a valid email.")
+  ),
+  currentPassword: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z.string().min(1, "Current password is required.")
   ),
 });
 
@@ -186,6 +239,25 @@ async function createAndSendEmailVerification(userId: string, email: string): Pr
   );
 
   await sendVerificationEmail(email, code);
+}
+
+async function createAndSendPasswordResetCode(userId: string, email: string): Promise<void> {
+  const code = newVerificationCode();
+  const codeHash = sha256(code);
+  const expiresAt = new Date(Date.now() + env.VERIFICATION_CODE_TTL_MINUTES * 60 * 1000);
+
+  await pool.query(
+    "delete from password_reset_codes where user_id = $1 and consumed_at is null",
+    [userId]
+  );
+
+  await pool.query(
+    `insert into password_reset_codes (user_id, code_hash, expires_at)
+     values ($1, $2, $3)`,
+    [userId, codeHash, expiresAt]
+  );
+
+  await sendPasswordResetEmail(email, code);
 }
 
 app.post("/auth/register", async (req: Request<{}, {}, RegisterBody>, res: Response) => {
@@ -275,6 +347,90 @@ app.post("/auth/verify-email", async (req: Request<{}, {}, VerifyEmailBody>, res
   }
 
   return res.status(200).json({ message: "Email verified successfully." });
+});
+
+app.post("/auth/request-password-reset", async (req: Request<{}, {}, RequestPasswordResetBody>, res: Response) => {
+  const { email } = parseOrBadRequest(requestPasswordResetSchema, req.body);
+
+  const userRes = await pool.query<Pick<UserRow, "id" | "email">>(
+    "select id, email from users where email = $1",
+    [email]
+  );
+
+  const user = userRes.rows[0];
+  if (user) {
+    try {
+      await createAndSendPasswordResetCode(user.id, user.email);
+    } catch (err) {
+      console.error("Failed to send password reset email:", err);
+      return res.status(502).json({ error: "Could not send password reset email. Please try again." });
+    }
+  }
+
+  return res.status(200).json({
+    message: "If that account exists, we sent a password reset code.",
+  });
+});
+
+app.post("/auth/reset-password", async (req: Request<{}, {}, ResetPasswordBody>, res: Response) => {
+  const { email, code, newPassword } = parseOrBadRequest(resetPasswordSchema, req.body);
+
+  const userRes = await pool.query<Pick<UserRow, "id">>(
+    "select id from users where email = $1",
+    [email]
+  );
+
+  const user = userRes.rows[0];
+  if (!user) {
+    return res.status(400).json({ error: "Invalid email or code." });
+  }
+
+  const codeRes = await pool.query<{
+    id: string;
+    code_hash: string;
+    expires_at: Date;
+    consumed_at: Date | null;
+  }>(
+    `select id, code_hash, expires_at, consumed_at
+     from password_reset_codes
+     where user_id = $1
+     order by created_at desc
+     limit 1`,
+    [user.id]
+  );
+
+  const latestCode = codeRes.rows[0];
+  if (!latestCode || latestCode.consumed_at || new Date(latestCode.expires_at).getTime() < Date.now()) {
+    return res.status(400).json({ error: "Invalid email or code." });
+  }
+
+  if (sha256(code) !== latestCode.code_hash) {
+    return res.status(400).json({ error: "Invalid email or code." });
+  }
+
+  const newHash = await bcrypt.hash(newPassword, 12);
+
+  await pool.query("begin");
+  try {
+    await pool.query(
+      "update users set password_hash = $2, token_version = token_version + 1 where id = $1",
+      [user.id, newHash]
+    );
+    await pool.query(
+      "update password_reset_codes set consumed_at = now() where id = $1",
+      [latestCode.id]
+    );
+    await pool.query(
+      "update refresh_sessions set revoked_at = now() where user_id = $1 and revoked_at is null",
+      [user.id]
+    );
+    await pool.query("commit");
+  } catch {
+    await pool.query("rollback");
+    return res.status(500).json({ error: "Server error" });
+  }
+
+  return res.status(200).json({ message: "Password reset successful. Please log in." });
 });
 
 app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) => {
@@ -384,6 +540,64 @@ app.post("/auth/logout", async (req: Request, res: Response) => {
   res.sendStatus(204);
 });
 
+app.post("/auth/change-email", requireAuth, async (req: Request<{}, {}, ChangeEmailBody>, res: Response) => {
+  const { newEmail, currentPassword } = parseOrBadRequest(changeEmailSchema, req.body);
+
+  const userId = (req as AuthedRequest).user.sub;
+
+  const userRes = await pool.query<Pick<UserRow, "id" | "email" | "password_hash">>(
+    "select id, email, password_hash from users where id = $1",
+    [userId]
+  );
+  const user = userRes.rows[0];
+  if (!user) return res.status(404).json({ error: "User not found." });
+
+  if (user.email === newEmail) {
+    return res.status(400).json({ error: "New email must be different from current email." });
+  }
+
+  const passwordOk = await bcrypt.compare(currentPassword, user.password_hash);
+  if (!passwordOk) {
+    return res.status(401).json({ error: "Current password is incorrect." });
+  }
+
+  const existingRes = await pool.query<{ id: string }>(
+    "select id from users where email = $1 and id <> $2",
+    [newEmail, userId]
+  );
+  if (existingRes.rows[0]) {
+    return res.status(409).json({ error: "That email is already in use." });
+  }
+
+  await pool.query("begin");
+  try {
+    await pool.query(
+      "update users set email = $2, email_verified = false, token_version = token_version + 1 where id = $1",
+      [userId, newEmail]
+    );
+    await pool.query(
+      "update refresh_sessions set revoked_at = now() where user_id = $1 and revoked_at is null",
+      [userId]
+    );
+    await pool.query("commit");
+  } catch {
+    await pool.query("rollback");
+    return res.status(500).json({ error: "Server error" });
+  }
+
+  try {
+    await createAndSendEmailVerification(userId, newEmail);
+  } catch (err) {
+    console.error("Failed to send verification email:", err);
+    return res.status(502).json({ error: "Email changed but verification email could not be sent. Try again." });
+  }
+
+  return res.status(200).json({
+    message: "Email changed. Verify your new email before logging in again.",
+    newEmail,
+  });
+});
+
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const auth = req.header("authorization");
   const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
@@ -443,6 +657,24 @@ async function ensureEmailVerificationTables() {
   `);
 }
 
+async function ensurePasswordResetTables() {
+  await pool.query(`
+    create table if not exists password_reset_codes (
+      id bigserial primary key,
+      user_id uuid not null references users(id) on delete cascade,
+      code_hash text not null,
+      expires_at timestamptz not null,
+      consumed_at timestamptz,
+      created_at timestamptz not null default now()
+    )
+  `);
+
+  await pool.query(`
+    create index if not exists idx_password_reset_codes_user_id_created_at
+    on password_reset_codes (user_id, created_at desc)
+  `);
+}
+
 app.get("/api/weather", requireAuth, async (req: Request, res: Response) => {
   try {
     const { city, state, units } = parseOrBadRequest(weatherQuerySchema, req.query) as {
@@ -498,6 +730,7 @@ app.get("/api/weather/history", requireAuth, async (req: Request, res: Response)
 
 export async function start() {
   await ensureEmailVerificationTables();
+  await ensurePasswordResetTables();
   await ensureWeatherHistoryTable();
   await connectRedis();
   app.listen(Number(env.PORT), () => {

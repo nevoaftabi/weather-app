@@ -114,6 +114,12 @@ export default function Login() {
             >
               Already registered? Verify your email
             </Link>
+            <Link
+              to={`/reset-password${email ? `?email=${encodeURIComponent(email)}` : ""}`}
+              className="text-xs text-slate-400 hover:text-slate-200"
+            >
+              Forgot password? Reset it
+            </Link>
           </div>
         </div>
       </form>

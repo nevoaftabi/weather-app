@@ -149,12 +149,20 @@ export default function WeatherApp() {
               </p>
             </div>
 
-            <Link
-              to="/logout"
-              className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
-            >
-              Log out
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link
+                to="/account-settings"
+                className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+              >
+                Account settings
+              </Link>
+              <Link
+                to="/logout"
+                className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+              >
+                Log out
+              </Link>
+            </div>
           </div>
 
           {/* Card */}

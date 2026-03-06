@@ -25,3 +25,20 @@ export async function sendVerificationEmail(to: string, code: string): Promise<v
     `,
   });
 }
+
+export async function sendPasswordResetEmail(to: string, code: string): Promise<void> {
+  await transporter.sendMail({
+    from: env.MAIL_FROM,
+    to,
+    subject: "Reset your Weather App password",
+    text: `Your password reset code is ${code}. It expires in ${env.VERIFICATION_CODE_TTL_MINUTES} minutes.`,
+    html: `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <h2>Reset your Weather App password</h2>
+        <p>Your password reset code is:</p>
+        <p style="font-size: 24px; font-weight: bold; letter-spacing: 4px;">${code}</p>
+        <p>This code expires in ${env.VERIFICATION_CODE_TTL_MINUTES} minutes.</p>
+      </div>
+    `,
+  });
+}
