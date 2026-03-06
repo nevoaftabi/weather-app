@@ -496,7 +496,7 @@ app.get("/api/weather/history", requireAuth, async (req: Request, res: Response)
   }
 });
 
-async function start() {
+export async function start() {
   await ensureEmailVerificationTables();
   await ensureWeatherHistoryTable();
   await connectRedis();
@@ -505,7 +505,11 @@ async function start() {
   });
 }
 
-start().catch((err) => {
-  console.error("Failed to start server:", err);
-  process.exit(1);
-});
+export { app };
+
+if (require.main === module) {
+  start().catch((err) => {
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  });
+}
