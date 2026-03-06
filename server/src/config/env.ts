@@ -27,5 +27,9 @@ export const env = {
   ACCESS_EXPIRES: requireEnv("ACCESS_EXPIRES"),
   REFRESH_DAYS: requireEnv("REFRESH_DAYS"),
   DATABASE_URL: requireEnv("DATABASE_URL"),
-  NODE_ENV: requireEnv("NODE_ENV")
+  NODE_ENV: requireEnv("NODE_ENV"),
+  GMAIL_USER: requireEnv("GMAIL_USER"),
+  GMAIL_APP_PASSWORD: requireEnv("GMAIL_APP_PASSWORD"),
+  MAIL_FROM: envOr("MAIL_FROM", requireEnv("GMAIL_USER")),
+  VERIFICATION_CODE_TTL_MINUTES: intOr("VERIFICATION_CODE_TTL_MINUTES", 15),
 };

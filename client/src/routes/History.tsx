@@ -10,6 +10,7 @@ type HistoryItem = {
     temp?: number;
     feelsLike?: number;
     condition?: string;
+    icon?: string;
     [key: string]: unknown;
   };
 };
@@ -18,6 +19,25 @@ function formatDateTime(value: string): string {
   const dt = new Date(value);
   if (Number.isNaN(dt.getTime())) return value;
   return dt.toLocaleString();
+}
+
+function getWeatherIcon(iconCode?: string, condition?: string): string {
+  if (iconCode?.startsWith("01")) return iconCode.endsWith("n") ? "🌙" : "☀️";
+  if (iconCode?.startsWith("02")) return iconCode.endsWith("n") ? "☁️" : "🌤️";
+  if (iconCode?.startsWith("03") || iconCode?.startsWith("04")) return "☁️";
+  if (iconCode?.startsWith("09") || iconCode?.startsWith("10")) return "🌧️";
+  if (iconCode?.startsWith("11")) return "⛈️";
+  if (iconCode?.startsWith("13")) return "❄️";
+  if (iconCode?.startsWith("50")) return "🌫️";
+
+  const normalized = (condition ?? "").toLowerCase();
+  if (normalized.includes("sun") || normalized.includes("clear")) return "☀️";
+  if (normalized.includes("cloud")) return "☁️";
+  if (normalized.includes("rain") || normalized.includes("drizzle")) return "🌧️";
+  if (normalized.includes("storm") || normalized.includes("thunder")) return "⛈️";
+  if (normalized.includes("snow")) return "❄️";
+  if (normalized.includes("fog") || normalized.includes("mist") || normalized.includes("haze")) return "🌫️";
+  return "🌡️";
 }
 
 export default function History() {
@@ -99,10 +119,7 @@ export default function History() {
             {!isLoading && !error && items.length > 0 ? (
               <div className="space-y-3">
                 {items.map((item) => (
-                  <article
-                    key={item.id}
-                    className="rounded-xl border border-white/10 bg-black/20 p-4"
-                  >
+                  <article key={item.id} className="rounded-xl border border-white/10 bg-black/20 p-4">
                     <div className="text-xs uppercase tracking-wide text-slate-400">
                       {formatDateTime(item.requestedAt)}
                     </div>
@@ -110,10 +127,10 @@ export default function History() {
                       {item.result.location ?? "Unknown location"}
                     </div>
                     <div className="mt-1 text-sm text-slate-300">
-                      Temp: {typeof item.result.temp === "number" ? item.result.temp : "N/A"} |
+                      Temp: {typeof item.result.temp === "number" ? Math.round(item.result.temp) : "N/A"} |
                       Feels like:{" "}
-                      {typeof item.result.feelsLike === "number" ? item.result.feelsLike : "N/A"} |
-                      Condition: {item.result.condition ?? "N/A"}
+                      {typeof item.result.feelsLike === "number" ? Math.round(item.result.feelsLike) : "N/A"} |
+                      Condition: {getWeatherIcon(item.result.icon, item.result.condition)} {item.result.condition ?? "N/A"}
                     </div>
                   </article>
                 ))}

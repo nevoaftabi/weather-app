@@ -9,12 +9,32 @@ type WeatherResponse = {
   temp: number;
   feelsLike: number;
   condition?: string;
+  icon?: string;
   // in case your server returns other fields
   [key: string]: unknown;
 };
 
 const isValidState = (state: string) => /^[A-Za-z]{2}$/.test(state.trim());
 const isValidCity = (city: string) => /^[A-Za-z][A-Za-z .'-]{1,79}$/.test(city.trim());
+
+function getWeatherIcon(iconCode?: string, condition?: string): string {
+  if (iconCode?.startsWith("01")) return iconCode.endsWith("n") ? "🌙" : "☀️";
+  if (iconCode?.startsWith("02")) return iconCode.endsWith("n") ? "☁️" : "🌤️";
+  if (iconCode?.startsWith("03") || iconCode?.startsWith("04")) return "☁️";
+  if (iconCode?.startsWith("09") || iconCode?.startsWith("10")) return "🌧️";
+  if (iconCode?.startsWith("11")) return "⛈️";
+  if (iconCode?.startsWith("13")) return "❄️";
+  if (iconCode?.startsWith("50")) return "🌫️";
+
+  const normalized = (condition ?? "").toLowerCase();
+  if (normalized.includes("sun") || normalized.includes("clear")) return "☀️";
+  if (normalized.includes("cloud")) return "☁️";
+  if (normalized.includes("rain") || normalized.includes("drizzle")) return "🌧️";
+  if (normalized.includes("storm") || normalized.includes("thunder")) return "⛈️";
+  if (normalized.includes("snow")) return "❄️";
+  if (normalized.includes("fog") || normalized.includes("mist") || normalized.includes("haze")) return "🌫️";
+  return "🌡️";
+}
 
 export default function WeatherApp() {
   const [city, setCity] = useState<string>("");
@@ -99,8 +119,12 @@ export default function WeatherApp() {
 
       const d = data as WeatherResponse;
 
-      setResultText(`${d.temp}${tempUnit} (feels like ${d.feelsLike}${tempUnit})`);
-      setConditionText(d.condition ?? "");
+      const roundedTemp = Math.round(d.temp);
+      const roundedFeelsLike = Math.round(d.feelsLike);
+      const weatherIcon = getWeatherIcon(d.icon, d.condition);
+
+      setResultText(`${roundedTemp}${tempUnit} (feels like ${roundedFeelsLike}${tempUnit})`);
+      setConditionText(`${weatherIcon} ${d.condition ?? ""}`.trim());
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Something went wrong.";
       setResultText(msg);

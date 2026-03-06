@@ -16,7 +16,7 @@ type WeatherPayload = {
 const router = Router();
 
 function makeKey(city: string, state: string, country: string, units: Units) {
-  return `wx:${city.trim().toLowerCase()},${state.trim().toLowerCase()},${country}:${units}`;
+  return `wx:${city},${state},${country}:${units}`.toLowerCase();
 }
 
 const weatherQuerySchema = z.object({

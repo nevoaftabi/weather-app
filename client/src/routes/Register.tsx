@@ -45,7 +45,7 @@ export default function Register() {
         password: parsed.data.password,
       });
 
-      navigate("/login");
+      navigate(`/verify-email?email=${encodeURIComponent(parsed.data.email)}`);
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : "Registration failed.");
     } finally {

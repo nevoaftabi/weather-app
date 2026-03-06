@@ -4,6 +4,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
+import { randomInt } from "crypto";
 import { z } from "zod";
 
 import { WeatherApi, Units } from "./services/weatherApi";
@@ -13,6 +14,7 @@ import { connectRedis } from "./redis";
 
 import { pool } from "./db";
 import { newRefreshToken, sha256 } from "./tokens";
+import { sendVerificationEmail } from "./services/verificationEmail";
 
 const app = express();
 const weatherApi = new WeatherApi();
@@ -53,6 +55,7 @@ type UserRow = {
   email: string;
   password_hash: string;
   token_version: number;
+  email_verified: boolean;
 };
 
 type UserPublicRow = {
@@ -76,6 +79,11 @@ type RegisterBody = {
 type LoginBody = {
   email?: unknown;
   password?: unknown;
+};
+
+type VerifyEmailBody = {
+  email?: unknown;
+  code?: unknown;
 };
 
 type AccessTokenClaims = jwt.JwtPayload & {
@@ -118,6 +126,17 @@ const credentialsSchema = z.object({
   ),
 });
 
+const verifyEmailSchema = z.object({
+  email: z.preprocess(
+    (raw) => String(raw ?? "").trim().toLowerCase(),
+    z.string().min(1, "email is required.")
+  ),
+  code: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z.string().regex(/^\d{6}$/, "Verification code must be 6 digits.")
+  ),
+});
+
 const weatherQuerySchema = z.object({
   city: z.preprocess(
     (raw) => String(raw ?? "").trim(),
@@ -146,30 +165,129 @@ function parseOrBadRequest<T>(schema: z.ZodType<T>, input: unknown): T {
   return parsed.data;
 }
 
+function newVerificationCode(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, "0");
+}
+
+async function createAndSendEmailVerification(userId: string, email: string): Promise<void> {
+  const code = newVerificationCode();
+  const codeHash = sha256(code);
+  const expiresAt = new Date(Date.now() + env.VERIFICATION_CODE_TTL_MINUTES * 60 * 1000);
+
+  await pool.query(
+    "delete from email_verification_codes where user_id = $1 and consumed_at is null",
+    [userId]
+  );
+
+  await pool.query(
+    `insert into email_verification_codes (user_id, code_hash, expires_at)
+     values ($1, $2, $3)`,
+    [userId, codeHash, expiresAt]
+  );
+
+  await sendVerificationEmail(email, code);
+}
+
 app.post("/auth/register", async (req: Request<{}, {}, RegisterBody>, res: Response) => {
   const { email, password } = parseOrBadRequest(credentialsSchema, req.body);
 
   const passwordHash = await bcrypt.hash(password, 12);
 
-  const result = await pool.query<Pick<UserRow, "id" | "email" | "token_version">>(
-    "insert into users (email, password_hash) values ($1, $2) returning id, email, token_version",
+  const result = await pool.query<Pick<UserRow, "id" | "email" | "token_version" | "email_verified">>(
+    "insert into users (email, password_hash, email_verified) values ($1, $2, false) returning id, email, token_version, email_verified",
     [email, passwordHash]
   );
 
   const u = result.rows[0];
-  res.status(201).json({ id: u.id, email: u.email });
+  try {
+    await createAndSendEmailVerification(u.id, u.email);
+  } catch (err) {
+    console.error("Failed to send verification email:", err);
+    return res.status(502).json({ error: "Could not send verification email. Please try again." });
+  }
+
+  res.status(201).json({
+    id: u.id,
+    email: u.email,
+    message: "Registration successful. Check your email for a verification code.",
+  });
+});
+
+app.post("/auth/verify-email", async (req: Request<{}, {}, VerifyEmailBody>, res: Response) => {
+  const { email, code } = parseOrBadRequest(verifyEmailSchema, req.body);
+
+  const userRes = await pool.query<Pick<UserRow, "id" | "email_verified">>(
+    "select id, email_verified from users where email = $1",
+    [email]
+  );
+
+  const user = userRes.rows[0];
+  if (!user) {
+    return res.status(404).json({ error: "User not found." });
+  }
+
+  if (user.email_verified) {
+    return res.status(200).json({ message: "Email already verified." });
+  }
+
+  const codeRes = await pool.query<{
+    id: string;
+    code_hash: string;
+    expires_at: Date;
+    consumed_at: Date | null;
+  }>(
+    `select id, code_hash, expires_at, consumed_at
+     from email_verification_codes
+     where user_id = $1
+     order by created_at desc
+     limit 1`,
+    [user.id]
+  );
+
+  const latestCode = codeRes.rows[0];
+  if (!latestCode) {
+    return res.status(400).json({ error: "Verification code not found." });
+  }
+
+  if (latestCode.consumed_at) {
+    return res.status(400).json({ error: "Verification code has already been used." });
+  }
+
+  if (new Date(latestCode.expires_at).getTime() < Date.now()) {
+    return res.status(400).json({ error: "Verification code has expired." });
+  }
+
+  if (sha256(code) !== latestCode.code_hash) {
+    return res.status(400).json({ error: "Invalid verification code." });
+  }
+
+  await pool.query("begin");
+  try {
+    await pool.query("update users set email_verified = true where id = $1", [user.id]);
+    await pool.query(
+      "update email_verification_codes set consumed_at = now() where id = $1",
+      [latestCode.id]
+    );
+    await pool.query("commit");
+  } catch {
+    await pool.query("rollback");
+    return res.status(500).json({ error: "Server error" });
+  }
+
+  return res.status(200).json({ message: "Email verified successfully." });
 });
 
 app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) => {
   const { email, password } = parseOrBadRequest(credentialsSchema, req.body);
 
   const userRes = await pool.query<UserRow>(
-    "select id, email, password_hash, token_version from users where email = $1",
+    "select id, email, password_hash, token_version, email_verified from users where email = $1",
     [email]
   );
 
   const user = userRes.rows[0];
   if (!user) return res.sendStatus(401);
+  if (!user.email_verified) return res.status(403).json({ error: "Please verify your email before logging in." });
 
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return res.sendStatus(401);
@@ -302,6 +420,29 @@ async function ensureWeatherHistoryTable() {
   `);
 }
 
+async function ensureEmailVerificationTables() {
+  await pool.query(`
+    alter table users
+    add column if not exists email_verified boolean not null default false
+  `);
+
+  await pool.query(`
+    create table if not exists email_verification_codes (
+      id bigserial primary key,
+      user_id uuid not null references users(id) on delete cascade,
+      code_hash text not null,
+      expires_at timestamptz not null,
+      consumed_at timestamptz,
+      created_at timestamptz not null default now()
+    )
+  `);
+
+  await pool.query(`
+    create index if not exists idx_email_verification_codes_user_id_created_at
+    on email_verification_codes (user_id, created_at desc)
+  `);
+}
+
 app.get("/api/weather", requireAuth, async (req: Request, res: Response) => {
   try {
     const { city, state, units } = parseOrBadRequest(weatherQuerySchema, req.query) as {
@@ -356,6 +497,7 @@ app.get("/api/weather/history", requireAuth, async (req: Request, res: Response)
 });
 
 async function start() {
+  await ensureEmailVerificationTables();
   await ensureWeatherHistoryTable();
   await connectRedis();
   app.listen(Number(env.PORT), () => {
