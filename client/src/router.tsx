@@ -7,6 +7,7 @@ import ResetPassword from "./routes/ResetPassword";
 import Logout from "./routes/Logout";
 import History from "./routes/History";
 import AccountSettings from "./routes/AccountSettings";
+import Feedback from "./routes/Feedback";
 import RequireAuth from "./auth/RequireAuth";
 import NotFoundRedirect from "./routes/NotFoundRedirect";
 
@@ -15,6 +16,7 @@ export const router = createBrowserRouter([
   { path: "/home", element: <RequireAuth><Home /></RequireAuth> },
   { path: "/history", element: <RequireAuth><History /></RequireAuth> },
   { path: "/account-settings", element: <RequireAuth><AccountSettings /></RequireAuth> },
+  { path: "/feedback", element: <RequireAuth><Feedback /></RequireAuth> },
   { path: "/login", element: <Login /> },
   { path: "/register", element: <Register /> },
   { path: "/verify-email", element: <VerifyEmail /> },

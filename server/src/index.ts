@@ -14,10 +14,12 @@ import { connectRedis } from "./redis";
 
 import { pool } from "./db";
 import { newRefreshToken, sha256 } from "./tokens";
-import { sendPasswordResetEmail, sendVerificationEmail } from "./services/verificationEmail";
+import { sendFeedbackEmail, sendLoginNotificationEmail, sendPasswordResetEmail, sendVerificationEmail } from "./services/verificationEmail";
 
 const app = express();
 const weatherApi = new WeatherApi();
+
+app.set("trust proxy", 1);
 
 app.use(express.json());
 app.use(cookieParser());
@@ -56,6 +58,7 @@ type UserRow = {
   password_hash: string;
   token_version: number;
   email_verified: boolean;
+  last_ip: string | null;
 };
 
 type UserPublicRow = {
@@ -99,6 +102,11 @@ type ResetPasswordBody = {
 type ChangeEmailBody = {
   newEmail?: unknown;
   currentPassword?: unknown;
+};
+
+type FeedbackBody = {
+  subject?: unknown;
+  body?: unknown;
 };
 
 type AccessTokenClaims = jwt.JwtPayload & {
@@ -190,6 +198,17 @@ const changeEmailSchema = z.object({
   ),
 });
 
+const feedbackSchema = z.object({
+  subject: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z.string().min(1, "Subject is required.").max(120, "Subject is too long.")
+  ),
+  body: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z.string().min(1, "Body is required.").max(5000, "Body is too long.")
+  ),
+});
+
 const weatherQuerySchema = z.object({
   city: z.preprocess(
     (raw) => String(raw ?? "").trim(),
@@ -216,6 +235,66 @@ function parseOrBadRequest<T>(schema: z.ZodType<T>, input: unknown): T {
     throw new HttpError(400, message);
   }
   return parsed.data;
+}
+
+function normalizeIPv4(raw: string): string | null {
+  const ip = raw.trim();
+  const unmapped = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  const parts = unmapped.split(".");
+  if (parts.length !== 4) return null;
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return nums.join(".");
+}
+
+function isPublicIPv4(ip: string): boolean {
+  const [a, b] = ip.split(".").map(Number);
+
+  if (a === 10) return false;
+  if (a === 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false; // carrier-grade NAT
+  if (a === 0) return false;
+  if (a >= 224) return false; // multicast/reserved
+  if (a === 198 && (b === 18 || b === 19)) return false; // benchmark range
+
+  return true;
+}
+
+function firstPublicIPv4(rawHeader: string | undefined): string | null {
+  if (!rawHeader) return null;
+  const candidates = rawHeader.split(",").map((v) => v.trim()).filter(Boolean);
+
+  for (const candidate of candidates) {
+    const ip = normalizeIPv4(candidate);
+    if (ip && isPublicIPv4(ip)) return ip;
+  }
+  return null;
+}
+
+function clientPublicIPv4(req: Request): string | null {
+  const fromForwarded = firstPublicIPv4(req.header("x-forwarded-for") ?? undefined);
+  if (fromForwarded) return fromForwarded;
+
+  const fromCf = firstPublicIPv4(req.header("cf-connecting-ip") ?? undefined);
+  if (fromCf) return fromCf;
+
+  const fromRealIp = firstPublicIPv4(req.header("x-real-ip") ?? undefined);
+  if (fromRealIp) return fromRealIp;
+
+  const direct = normalizeIPv4(req.ip ?? "");
+  if (direct && isPublicIPv4(direct)) return direct;
+
+  const remote = normalizeIPv4(req.socket.remoteAddress ?? "");
+  if (remote && isPublicIPv4(remote)) return remote;
+
+  return null;
+}
+
+function clientObservedIp(req: Request): string | null {
+  return req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? req.ip ?? req.socket.remoteAddress ?? null;
 }
 
 function newVerificationCode(): string {
@@ -262,12 +341,13 @@ async function createAndSendPasswordResetCode(userId: string, email: string): Pr
 
 app.post("/auth/register", async (req: Request<{}, {}, RegisterBody>, res: Response) => {
   const { email, password } = parseOrBadRequest(credentialsSchema, req.body);
+  const ipAddress = clientPublicIPv4(req);
 
   const passwordHash = await bcrypt.hash(password, 12);
 
   const result = await pool.query<Pick<UserRow, "id" | "email" | "token_version" | "email_verified">>(
-    "insert into users (email, password_hash, email_verified) values ($1, $2, false) returning id, email, token_version, email_verified",
-    [email, passwordHash]
+    "insert into users (email, password_hash, email_verified, last_ip) values ($1, $2, false, $3) returning id, email, token_version, email_verified",
+    [email, passwordHash, ipAddress]
   );
 
   const u = result.rows[0];
@@ -435,6 +515,8 @@ app.post("/auth/reset-password", async (req: Request<{}, {}, ResetPasswordBody>,
 
 app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) => {
   const { email, password } = parseOrBadRequest(credentialsSchema, req.body);
+  const ipAddress = clientPublicIPv4(req);
+  const observedIp = clientObservedIp(req);
 
   const userRes = await pool.query<UserRow>(
     "select id, email, password_hash, token_version, email_verified from users where email = $1",
@@ -447,6 +529,8 @@ app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) =
 
   const ok = await bcrypt.compare(password, user.password_hash);
   if (!ok) return res.sendStatus(401);
+
+  await pool.query("update users set last_ip = $2 where id = $1", [user.id, ipAddress]);
 
   const accessToken = signAccessToken({
     id: user.id,
@@ -461,11 +545,18 @@ app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) =
   await pool.query(
     `insert into refresh_sessions (user_id, refresh_token_hash, expires_at, user_agent, ip)
      values ($1, $2, $3, $4, $5)`,
-    [user.id, refreshHash, expiresAt, req.get("user-agent") ?? null, req.ip]
+    [user.id, refreshHash, expiresAt, req.get("user-agent") ?? null, ipAddress]
   );
 
+  try {
+    await sendLoginNotificationEmail(user.email, ipAddress, observedIp);
+  } catch (err) {
+    // Login should still succeed if notification email fails.
+    console.error("Failed to send login notification email:", err);
+  }
+
   setRefreshCookie(res, refreshToken);
-  res.json({ accessToken });
+  res.json({ accessToken, ipAddress });
 });
 
 app.post("/auth/refresh", async (req: Request, res: Response) => {
@@ -526,7 +617,7 @@ app.post("/auth/refresh", async (req: Request, res: Response) => {
   res.json({ accessToken });
 });
 
-app.post("/auth/logout", async (req: Request, res: Response) => {
+app.post("/auth/logout", requireAuth, async (req: Request, res: Response) => {
   const token = req.cookies?.refresh_token as string | undefined;
 
   if (token) {
@@ -598,7 +689,7 @@ app.post("/auth/change-email", requireAuth, async (req: Request<{}, {}, ChangeEm
   });
 });
 
-function requireAuth(req: Request, res: Response, next: NextFunction): void {
+async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const auth = req.header("authorization");
   const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
   if (!token) {
@@ -614,12 +705,32 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
     return;
   }
 
-  if (typeof payload === "string" || typeof payload.sub !== "string") {
+  if (
+    typeof payload === "string" ||
+    typeof payload.sub !== "string" ||
+    typeof (payload as AccessTokenClaims).tokenVersion !== "number"
+  ) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
-  (req as AuthedRequest).user = payload as AccessTokenClaims;
+  const claims = payload as AccessTokenClaims;
+  const userRes = await pool.query<UserPublicRow>(
+    "select id, email, token_version from users where id = $1 and token_version = $2",
+    [claims.sub, claims.tokenVersion]
+  );
+
+  const user = userRes.rows[0];
+  if (!user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  (req as AuthedRequest).user = {
+    ...claims,
+    email: user.email,
+    tokenVersion: user.token_version,
+  };
   next();
 }
 
@@ -638,6 +749,11 @@ async function ensureEmailVerificationTables() {
   await pool.query(`
     alter table users
     add column if not exists email_verified boolean not null default false
+  `);
+
+  await pool.query(`
+    alter table users
+    add column if not exists last_ip text
   `);
 
   await pool.query(`
@@ -723,6 +839,22 @@ app.get("/api/weather/history", requireAuth, async (req: Request, res: Response)
       }))
     );
   } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.post("/api/feedback", requireAuth, async (req: Request<{}, {}, FeedbackBody>, res: Response) => {
+  try {
+    const { subject, body } = parseOrBadRequest(feedbackSchema, req.body);
+    const fromEmail = (req as AuthedRequest).user.email;
+
+    await sendFeedbackEmail(fromEmail, subject, body);
+    return res.status(200).json({ message: "Feedback sent. Thank you." });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error(err);
     return res.status(500).json({ error: "Server error" });
   }

@@ -226,6 +226,13 @@ export default function WeatherApp() {
 
                 <div className="flex items-center gap-3">
                   <Link
+                    to="/feedback"
+                    className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                  >
+                    Feedback
+                  </Link>
+
+                  <Link
                     to="/history"
                     className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                   >

@@ -41,6 +41,7 @@ const hoisted = vi.hoisted(() => {
     state.refreshSessions = [];
     state.weatherHistory = [];
     sendVerificationEmailMock.mockReset();
+    sendLoginNotificationEmailMock.mockReset();
     getWeatherMock.mockReset();
     getWeatherMock.mockResolvedValue({
       location: "Austin, TX",
@@ -53,6 +54,7 @@ const hoisted = vi.hoisted(() => {
   };
 
   const sendVerificationEmailMock = vi.fn(async () => undefined);
+  const sendLoginNotificationEmailMock = vi.fn(async () => undefined);
   const getWeatherMock = vi.fn();
 
   const queryMock = vi.fn(async (text: string, values: unknown[] = []) => {
@@ -118,6 +120,10 @@ const hoisted = vi.hoisted(() => {
       return { rows: [] };
     }
 
+    if (sql.startsWith("update users set last_ip = $2 where id = $1")) {
+      return { rows: [] };
+    }
+
     if (sql.startsWith("update email_verification_codes set consumed_at = now() where id = $1")) {
       const code = state.verificationCodes.find((c) => c.id === String(values[0]));
       if (code) code.consumed_at = new Date();
@@ -172,7 +178,7 @@ const hoisted = vi.hoisted(() => {
     throw new Error(`Unhandled SQL in test mock: ${sql}`);
   });
 
-  return { queryMock, sendVerificationEmailMock, getWeatherMock, reset, state };
+  return { queryMock, sendVerificationEmailMock, sendLoginNotificationEmailMock, getWeatherMock, reset, state };
 });
 
 vi.mock("../src/db", () => ({
@@ -181,6 +187,7 @@ vi.mock("../src/db", () => ({
 
 vi.mock("../src/services/verificationEmail", () => ({
   sendVerificationEmail: hoisted.sendVerificationEmailMock,
+  sendLoginNotificationEmail: hoisted.sendLoginNotificationEmailMock,
 }));
 
 vi.mock("../src/services/weatherApi", () => {
@@ -224,6 +231,11 @@ describe("Auth + weather API (e2e-style)", () => {
       .send({ email: "user@example.com", password: "Password1" });
     expect(loginRes.status).toBe(200);
     expect(typeof loginRes.body.accessToken).toBe("string");
+    expect(hoisted.sendLoginNotificationEmailMock).toHaveBeenCalledWith(
+      "user@example.com",
+      null,
+      expect.any(String)
+    );
 
     const weatherRes = await request(app)
       .get("/api/weather?city=Austin&state=TX&units=metric")
