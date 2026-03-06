@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import { cacheGetJson, cacheSetJson } from "./cache";
 
 type Units = "metric" | "imperial";
@@ -14,26 +15,33 @@ type WeatherPayload = {
 
 const router = Router();
 
-function normalizeCity(city: string) {
-  return city.trim().toLowerCase();
-}
-function normalizeState(state: string) {
-  return state.trim().toLowerCase();
+function makeKey(city: string, state: string, country: string, units: Units) {
+  return `wx:${city.trim().toLowerCase()},${state.trim().toLowerCase()},${country}:${units}`;
 }
 
-function makeKey(city: string, state: string, country: string, units: Units) {
-  return `wx:${normalizeCity(city)},${normalizeState(state)},${country}:${units}`;
-}
+const weatherQuerySchema = z.object({
+  city: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z.string().min(1, "city is required")
+  ),
+  state: z.preprocess(
+    (raw) => String(raw ?? "").trim().toUpperCase(),
+    z.string().regex(/^[A-Z]{2}$/, "state must be a 2-letter code (e.g., TX)")
+  ),
+  units: z.preprocess(
+    (raw) => String(raw ?? "metric").trim().toLowerCase(),
+    z.enum(["metric", "imperial"])
+  ),
+});
 
 router.get("/weather", async (req, res) => {
-  const city = String(req.query.city ?? "");
-  const state = String(req.query.state ?? "");
-  const units = (String(req.query.units ?? "metric").toLowerCase() as Units) || "metric";
-  const country = "us";
-
-  if (!city || !state || (units !== "metric" && units !== "imperial")) {
-    return res.status(400).json({ error: "Bad request" });
+  const parsed = weatherQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Bad request" });
   }
+
+  const { city, state, units } = parsed.data as { city: string; state: string; units: Units };
+  const country = "us";
 
   const ttl = Number(process.env.WEATHER_TTL_SECONDS ?? 600);
   const key = makeKey(city, state, country, units);
