@@ -4,6 +4,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
+import { z } from "zod";
 
 import { WeatherApi, Units } from "./services/weatherApi";
 import { HttpError } from "./HttpError";
@@ -77,6 +78,16 @@ type LoginBody = {
   password?: unknown;
 };
 
+type AccessTokenClaims = jwt.JwtPayload & {
+  sub: string;
+  email: string;
+  tokenVersion: number;
+};
+
+type AuthedRequest = Request & {
+  user: AccessTokenClaims;
+};
+
 function signAccessToken(user: UserPublicRow): string {
   return jwt.sign(
     { sub: user.id, email: user.email, tokenVersion: user.token_version },
@@ -96,15 +107,47 @@ function setRefreshCookie(res: Response, refreshToken: string): void {
   });
 }
 
-function requireString(raw: unknown, fieldName: string): string {
-  const v = String(raw ?? "").trim();
-  if (!v) throw new HttpError(400, `${fieldName} is required.`);
-  return v;
+const credentialsSchema = z.object({
+  email: z.preprocess(
+    (raw) => String(raw ?? "").trim().toLowerCase(),
+    z.string().min(1, "email is required.")
+  ),
+  password: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z.string().min(1, "password is required.")
+  ),
+});
+
+const weatherQuerySchema = z.object({
+  city: z.preprocess(
+    (raw) => String(raw ?? "").trim(),
+    z.string().min(1, "city is required.")
+  ),
+  state: z.preprocess(
+    (raw) => String(raw ?? "").trim().toUpperCase(),
+    z
+      .string()
+      .regex(/^[A-Z]{2}$/, "state must be a 2-letter code (e.g., TX).")
+  ),
+  units: z.preprocess(
+    (raw) => String(raw ?? "metric").trim().toLowerCase(),
+    z.enum(["metric", "imperial"], {
+      error: "Invalid units. Use 'metric' or 'imperial'.",
+    })
+  ),
+});
+
+function parseOrBadRequest<T>(schema: z.ZodType<T>, input: unknown): T {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) {
+    const message = parsed.error.issues[0]?.message ?? "Bad request";
+    throw new HttpError(400, message);
+  }
+  return parsed.data;
 }
 
 app.post("/auth/register", async (req: Request<{}, {}, RegisterBody>, res: Response) => {
-  const email = requireString(req.body.email, "email").toLowerCase();
-  const password = requireString(req.body.password, "password");
+  const { email, password } = parseOrBadRequest(credentialsSchema, req.body);
 
   const passwordHash = await bcrypt.hash(password, 12);
 
@@ -118,8 +161,7 @@ app.post("/auth/register", async (req: Request<{}, {}, RegisterBody>, res: Respo
 });
 
 app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) => {
-  const email = requireString(req.body.email, "email").toLowerCase();
-  const password = requireString(req.body.password, "password");
+  const { email, password } = parseOrBadRequest(credentialsSchema, req.body);
 
   const userRes = await pool.query<UserRow>(
     "select id, email, password_hash, token_version from users where email = $1",
@@ -224,28 +266,57 @@ app.post("/auth/logout", async (req: Request, res: Response) => {
   res.sendStatus(204);
 });
 
-// Your existing weather endpoint code
-function parseUnits(raw: unknown): Units {
-  const u = String(raw ?? "metric").trim().toLowerCase();
-  if (u === "metric" || u === "imperial") return u;
-  throw new HttpError(400, "Invalid units. Use 'metric' or 'imperial'.");
-}
-
-function parseState(raw: unknown): string {
-  const state = requireString(raw, "state").toUpperCase();
-  if (!/^[A-Z]{2}$/.test(state)) {
-    throw new HttpError(400, "state must be a 2-letter code (e.g., TX).");
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  const auth = req.header("authorization");
+  const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
   }
-  return state;
+
+  let payload: string | jwt.JwtPayload;
+  try {
+    payload = jwt.verify(token, ACCESS_SECRET);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  if (typeof payload === "string" || typeof payload.sub !== "string") {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  (req as AuthedRequest).user = payload as AccessTokenClaims;
+  next();
 }
 
-app.get("/api/weather", async (req: Request, res: Response) => {
+async function ensureWeatherHistoryTable() {
+  await pool.query(`
+    create table if not exists weather_history (
+      id bigserial primary key,
+      user_id uuid not null references users(id) on delete cascade,
+      result jsonb not null,
+      requested_at timestamptz not null default now()
+    )
+  `);
+}
+
+app.get("/api/weather", requireAuth, async (req: Request, res: Response) => {
   try {
-    const city = requireString(req.query.city, "city");
-    const state = parseState(req.query.state);
-    const units = parseUnits(req.query.units);
+    const { city, state, units } = parseOrBadRequest(weatherQuerySchema, req.query) as {
+      city: string;
+      state: string;
+      units: Units;
+    };
 
     const data = await weatherApi.getWeather(env.WEATHER_API_KEY, city, state, units);
+
+    await pool.query(
+      "insert into weather_history (user_id, result) values ($1, $2::jsonb)",
+      [(req as AuthedRequest).user.sub, JSON.stringify(data)]
+    );
+
     return res.json(data);
   } catch (err) {
     if (err instanceof HttpError) {
@@ -256,7 +327,36 @@ app.get("/api/weather", async (req: Request, res: Response) => {
   }
 });
 
+app.get("/api/weather/history", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query<{
+      id: string;
+      requested_at: Date;
+      result: unknown;
+    }>(
+      `select id, requested_at, result
+       from weather_history
+       where user_id = $1
+       order by requested_at desc
+       limit 100`,
+      [(req as AuthedRequest).user.sub]
+    );
+
+    return res.json(
+      result.rows.map((row) => ({
+        id: row.id,
+        requestedAt: row.requested_at,
+        result: row.result,
+      }))
+    );
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
 async function start() {
+  await ensureWeatherHistoryTable();
   await connectRedis();
   app.listen(Number(env.PORT), () => {
     console.log(`Listening on port ${env.PORT}`);

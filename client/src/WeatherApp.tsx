@@ -1,5 +1,7 @@
 // WeatherApp.tsx
 import React, { useMemo, useState } from "react";
+import { Link } from "react-router";
+import { apiFetch } from "./auth/api";
 
 type Units = "metric" | "imperial";
 
@@ -71,12 +73,12 @@ export default function WeatherApp() {
 
     try {
       const url =
-        `http://localhost:3000/api/weather` +
+        `/api/weather` +
         `?city=${encodeURIComponent(c)}` +
         `&state=${encodeURIComponent(s)}` +
         `&units=${encodeURIComponent(units)}`;
 
-      const res = await fetch(url);
+      const res = await apiFetch(url);
       const data: unknown = await res.json().catch(() => ({}));
       if (!res.ok) {
           const msg =
@@ -113,13 +115,22 @@ export default function WeatherApp() {
       <main className="mx-auto flex min-h-screen max-w-3xl items-center px-4 py-12">
         <div className="w-full">
           {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-              Weather App
-            </h1>
-            <p className="mt-2 text-sm text-slate-300">
-              Enter a city and state, then choose Metric or Imperial.
-            </p>
+          <div className="mb-8 flex items-start justify-between gap-3">
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+                Weather App
+              </h1>
+              <p className="mt-2 text-sm text-slate-300">
+                Enter a city and state, then choose Metric or Imperial.
+              </p>
+            </div>
+
+            <Link
+              to="/logout"
+              className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+            >
+              Log out
+            </Link>
           </div>
 
           {/* Card */}
@@ -181,13 +192,22 @@ export default function WeatherApp() {
                   </span>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="inline-flex items-center justify-center rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-sky-500/40 disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  {isLoading ? "Loading..." : "Get weather"}
-                </button>
+                <div className="flex items-center gap-3">
+                  <Link
+                    to="/history"
+                    className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                  >
+                    View history
+                  </Link>
+
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="inline-flex items-center justify-center rounded-xl bg-sky-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-sky-500/40 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {isLoading ? "Loading..." : "Get weather"}
+                  </button>
+                </div>
               </div>
 
               {/* Results */}
