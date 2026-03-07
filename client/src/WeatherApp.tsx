@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { apiFetch } from "./auth/api";
+import { getAccessToken } from "./auth/authStore";
 
 type Units = "metric" | "imperial";
 
@@ -36,6 +37,20 @@ function getWeatherIcon(iconCode?: string, condition?: string): string {
   return "🌡️";
 }
 
+function isAdminUser(): boolean {
+  const token = getAccessToken();
+  if (!token) return false;
+  const [, payload] = token.split(".");
+  if (!payload) return false;
+  try {
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const json = JSON.parse(atob(b64)) as { role?: string };
+    return json.role === "admin" || json.role === "root";
+  } catch {
+    return false;
+  }
+}
+
 export default function WeatherApp() {
   const [city, setCity] = useState<string>("");
   const [stateCode, setStateCode] = useState<string>("");
@@ -47,6 +62,7 @@ export default function WeatherApp() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const tempUnit = useMemo(() => (units === "imperial" ? "°F" : "°C"), [units]);
+  const showUsersButton = useMemo(() => isAdminUser(), []);
 
   const validateInputs = () => {
     const c = city.trim();
@@ -225,6 +241,15 @@ export default function WeatherApp() {
                 </div>
 
                 <div className="flex items-center gap-3">
+                  {showUsersButton ? (
+                    <Link
+                      to="/users"
+                      className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                    >
+                      Users
+                    </Link>
+                  ) : null}
+
                   <Link
                     to="/feedback"
                     className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/40"

@@ -1,6 +1,8 @@
 import { getAccessToken, setAccessToken } from "./authStore";
 
-const API_BASE = "http://localhost:3000";
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) ||
+  "http://localhost:3000";
 
 type RefreshResponse = { accessToken: string };
 
@@ -30,8 +32,8 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
 
   let res = await doReq();
 
-  // If access token expired, try refresh once
-  if (res.status === 401) {
+  // If access token expired, try refresh once (except on refresh endpoint itself)
+  if (res.status === 401 && input !== "/auth/refresh") {
     try {
       const newToken = await refreshAccessToken();
       headers.set("Authorization", `Bearer ${newToken}`);

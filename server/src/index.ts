@@ -14,19 +14,29 @@ import { connectRedis } from "./redis";
 
 import { pool } from "./db";
 import { newRefreshToken, sha256 } from "./tokens";
-import { sendFeedbackEmail, sendLoginNotificationEmail, sendPasswordResetEmail, sendVerificationEmail } from "./services/verificationEmail";
+import { sendFeedbackEmail, sendPasswordResetEmail, sendVerificationEmail } from "./services/verificationEmail";
 
 const app = express();
 const weatherApi = new WeatherApi();
 
 app.set("trust proxy", 1);
 
+const corsOrigins = Array.from(
+  new Set(
+    [
+      ...env.CLIENT_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean),
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+    ]
+  )
+);
+
 app.use(express.json());
 app.use(cookieParser());
 
 app.use(
   cors({
-    origin: ["http://127.0.0.1:5173", "http://localhost:5173"],
+    origin: corsOrigins,
     credentials: true,
   })
 );
@@ -51,6 +61,9 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 const ACCESS_SECRET = env.ACCESS_SECRET;
 const ACCESS_EXPIRES: jwt.SignOptions["expiresIn"] = "10m";
 const REFRESH_DAYS = 14;
+const ROOT_EMAIL = "user8474474@gmail.com";
+
+type UserRole = "user" | "admin" | "root";
 
 type UserRow = {
   id: string;
@@ -59,12 +72,14 @@ type UserRow = {
   token_version: number;
   email_verified: boolean;
   last_ip: string | null;
+  role: UserRole;
 };
 
 type UserPublicRow = {
   id: string;
   email: string;
   token_version: number;
+  role: UserRole;
 };
 
 type RefreshSessionRow = {
@@ -113,6 +128,7 @@ type AccessTokenClaims = jwt.JwtPayload & {
   sub: string;
   email: string;
   tokenVersion: number;
+  role: UserRole;
 };
 
 type AuthedRequest = Request & {
@@ -121,10 +137,14 @@ type AuthedRequest = Request & {
 
 function signAccessToken(user: UserPublicRow): string {
   return jwt.sign(
-    { sub: user.id, email: user.email, tokenVersion: user.token_version },
+    { sub: user.id, email: user.email, tokenVersion: user.token_version, role: user.role },
     ACCESS_SECRET,
     { expiresIn: ACCESS_EXPIRES }
   );
+}
+
+function roleForEmail(email: string): UserRole {
+  return email.toLowerCase() === ROOT_EMAIL.toLowerCase() ? "root" : "user";
 }
 
 function setRefreshCookie(res: Response, refreshToken: string): void {
@@ -133,7 +153,7 @@ function setRefreshCookie(res: Response, refreshToken: string): void {
   res.cookie("refresh_token", refreshToken, {
     httpOnly: true,
     secure: isProd,        // requires https in prod
-    sameSite: "lax",       // if API+client are on different domains in prod, you may need "none" + secure true
+    sameSite: isProd ? "none" : "lax",
     path: "/auth/refresh", // cookie only sent to refresh endpoint
   });
 }
@@ -228,6 +248,10 @@ const weatherQuerySchema = z.object({
   ),
 });
 
+const deleteUserParamsSchema = z.object({
+  userId: z.string().uuid("Invalid user id."),
+});
+
 function parseOrBadRequest<T>(schema: z.ZodType<T>, input: unknown): T {
   const parsed = schema.safeParse(input);
   if (!parsed.success) {
@@ -293,9 +317,15 @@ function clientPublicIPv4(req: Request): string | null {
   return null;
 }
 
-function clientObservedIp(req: Request): string | null {
-  return req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? req.ip ?? req.socket.remoteAddress ?? null;
-}
+app.use(async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    await ensureInitialized();
+    next();
+  } catch (err) {
+    console.error("Initialization error:", err);
+    res.status(500).json({ error: "Server initialization failed" });
+  }
+});
 
 function newVerificationCode(): string {
   return randomInt(0, 1_000_000).toString().padStart(6, "0");
@@ -342,12 +372,13 @@ async function createAndSendPasswordResetCode(userId: string, email: string): Pr
 app.post("/auth/register", async (req: Request<{}, {}, RegisterBody>, res: Response) => {
   const { email, password } = parseOrBadRequest(credentialsSchema, req.body);
   const ipAddress = clientPublicIPv4(req);
+  const role = roleForEmail(email);
 
   const passwordHash = await bcrypt.hash(password, 12);
 
   const result = await pool.query<Pick<UserRow, "id" | "email" | "token_version" | "email_verified">>(
-    "insert into users (email, password_hash, email_verified, last_ip) values ($1, $2, false, $3) returning id, email, token_version, email_verified",
-    [email, passwordHash, ipAddress]
+    "insert into users (email, password_hash, email_verified, last_ip, role) values ($1, $2, false, $3, $4) returning id, email, token_version, email_verified",
+    [email, passwordHash, ipAddress, role]
   );
 
   const u = result.rows[0];
@@ -516,10 +547,9 @@ app.post("/auth/reset-password", async (req: Request<{}, {}, ResetPasswordBody>,
 app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) => {
   const { email, password } = parseOrBadRequest(credentialsSchema, req.body);
   const ipAddress = clientPublicIPv4(req);
-  const observedIp = clientObservedIp(req);
 
   const userRes = await pool.query<UserRow>(
-    "select id, email, password_hash, token_version, email_verified from users where email = $1",
+    "select id, email, password_hash, token_version, email_verified, role from users where email = $1",
     [email]
   );
 
@@ -536,6 +566,7 @@ app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) =
     id: user.id,
     email: user.email,
     token_version: user.token_version,
+    role: user.role,
   });
 
   const refreshToken = newRefreshToken();
@@ -547,13 +578,6 @@ app.post("/auth/login", async (req: Request<{}, {}, LoginBody>, res: Response) =
      values ($1, $2, $3, $4, $5)`,
     [user.id, refreshHash, expiresAt, req.get("user-agent") ?? null, ipAddress]
   );
-
-  try {
-    await sendLoginNotificationEmail(user.email, ipAddress, observedIp);
-  } catch (err) {
-    // Login should still succeed if notification email fails.
-    console.error("Failed to send login notification email:", err);
-  }
 
   setRefreshCookie(res, refreshToken);
   res.json({ accessToken, ipAddress });
@@ -578,7 +602,7 @@ app.post("/auth/refresh", async (req: Request, res: Response) => {
   if (new Date(sess.expires_at).getTime() < Date.now()) return res.sendStatus(401);
 
   const userRes = await pool.query<UserPublicRow>(
-    "select id, email, token_version from users where id = $1",
+    "select id, email, token_version, role from users where id = $1",
     [sess.user_id]
   );
 
@@ -627,7 +651,11 @@ app.post("/auth/logout", requireAuth, async (req: Request, res: Response) => {
     );
   }
 
-  res.clearCookie("refresh_token", { path: "/auth/refresh" });
+  res.clearCookie("refresh_token", {
+    path: "/auth/refresh",
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
+    secure: env.NODE_ENV === "production",
+  });
   res.sendStatus(204);
 });
 
@@ -708,7 +736,8 @@ async function requireAuth(req: Request, res: Response, next: NextFunction): Pro
   if (
     typeof payload === "string" ||
     typeof payload.sub !== "string" ||
-    typeof (payload as AccessTokenClaims).tokenVersion !== "number"
+    typeof (payload as AccessTokenClaims).tokenVersion !== "number" ||
+    typeof (payload as AccessTokenClaims).role !== "string"
   ) {
     res.status(401).json({ error: "Unauthorized" });
     return;
@@ -716,7 +745,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction): Pro
 
   const claims = payload as AccessTokenClaims;
   const userRes = await pool.query<UserPublicRow>(
-    "select id, email, token_version from users where id = $1 and token_version = $2",
+    "select id, email, token_version, role from users where id = $1 and token_version = $2",
     [claims.sub, claims.tokenVersion]
   );
 
@@ -730,7 +759,17 @@ async function requireAuth(req: Request, res: Response, next: NextFunction): Pro
     ...claims,
     email: user.email,
     tokenVersion: user.token_version,
+    role: user.role,
   };
+  next();
+}
+
+function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  const user = (req as AuthedRequest).user;
+  if (user.role !== "admin" && user.role !== "root") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
   next();
 }
 
@@ -755,6 +794,16 @@ async function ensureEmailVerificationTables() {
     alter table users
     add column if not exists last_ip text
   `);
+
+  await pool.query(`
+    alter table users
+    add column if not exists role text not null default 'user'
+  `);
+
+  await pool.query(
+    "update users set role = 'root' where lower(email) = lower($1)",
+    [ROOT_EMAIL]
+  );
 
   await pool.query(`
     create table if not exists email_verification_codes (
@@ -860,11 +909,68 @@ app.post("/api/feedback", requireAuth, async (req: Request<{}, {}, FeedbackBody>
   }
 });
 
+app.get("/api/admin/users", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const users = await pool.query<{
+      id: string;
+      email: string;
+      role: UserRole;
+      email_verified: boolean;
+      last_ip: string | null;
+    }>(
+      `select id, email, role, email_verified, last_ip
+       from users
+       order by email asc`
+    );
+
+    return res.json(users.rows);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.delete("/api/admin/users/:userId", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { userId } = parseOrBadRequest(deleteUserParamsSchema, req.params);
+    const actor = (req as AuthedRequest).user;
+
+    if (actor.sub === userId) {
+      return res.status(400).json({ error: "You cannot delete your own account." });
+    }
+
+    const targetRes = await pool.query<{ id: string; role: UserRole }>(
+      "select id, role from users where id = $1",
+      [userId]
+    );
+    const target = targetRes.rows[0];
+
+    if (!target) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    if (target.role === "root" && actor.role !== "root") {
+      return res.status(403).json({ error: "Only root can delete a root account." });
+    }
+
+    await pool.query<{ id: string }>(
+      "delete from users where id = $1 returning id",
+      [userId]
+    );
+
+    // weather_history rows are removed automatically via FK ON DELETE CASCADE
+    return res.status(200).json({ message: "User deleted." });
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
 export async function start() {
-  await ensureEmailVerificationTables();
-  await ensurePasswordResetTables();
-  await ensureWeatherHistoryTable();
-  await connectRedis();
+  await ensureInitialized();
   app.listen(Number(env.PORT), () => {
     console.log(`Listening on port ${env.PORT}`);
   });
@@ -872,7 +978,23 @@ export async function start() {
 
 export { app };
 
-if (require.main === module) {
+let initPromise: Promise<void> | null = null;
+function ensureInitialized(): Promise<void> {
+  if (!initPromise) {
+    initPromise = (async () => {
+      await ensureEmailVerificationTables();
+      await ensurePasswordResetTables();
+      await ensureWeatherHistoryTable();
+      await connectRedis();
+    })().catch((err) => {
+      initPromise = null;
+      throw err;
+    });
+  }
+  return initPromise;
+}
+
+if (typeof require !== "undefined" && require.main === module) {
   start().catch((err) => {
     console.error("Failed to start server:", err);
     process.exit(1);

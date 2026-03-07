@@ -60,26 +60,3 @@ export async function sendFeedbackEmail(fromEmail: string, subject: string, body
     `,
   });
 }
-
-export async function sendLoginNotificationEmail(
-  userEmail: string,
-  publicIpAddress: string | null,
-  observedIpAddress: string | null
-): Promise<void> {
-  const publicIpText = publicIpAddress ?? "unavailable";
-  const observedIpText = observedIpAddress ?? "unknown";
-
-  await transporter.sendMail({
-    from: env.MAIL_FROM,
-    to: env.GMAIL_USER,
-    subject: "Weather App login notification",
-    text: `User ${userEmail} logged in.\nPublic IPv4: ${publicIpText}\nObserved IP: ${observedIpText}`,
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-        <p><strong>User email:</strong> ${userEmail}</p>
-        <p><strong>Public IPv4:</strong> ${publicIpText}</p>
-        <p><strong>Observed IP:</strong> ${observedIpText}</p>
-      </div>
-    `,
-  });
-}
