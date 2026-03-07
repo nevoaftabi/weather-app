@@ -1,7 +1,6 @@
 # Weather App
 
-This project is a full web app where users can create an account, sign in, and check weather by city and state.  
-It is designed to feel like a real product, not just a demo.
+This project is a full web app where users can create an account, sign in, and check weather by city and state.
 
 ## What It Does
 
