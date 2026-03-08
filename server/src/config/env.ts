@@ -33,4 +33,5 @@ export const env = {
   MAIL_FROM: envOr("MAIL_FROM", requireEnv("GMAIL_USER")),
   VERIFICATION_CODE_TTL_MINUTES: intOr("VERIFICATION_CODE_TTL_MINUTES", 15),
   CLIENT_ORIGINS: envOr("CLIENT_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173"),
+  ROOT_EMAIL: envOr("ROOT_EMAIL", "user8474474@gmail.com"),
 };

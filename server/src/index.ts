@@ -61,7 +61,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 const ACCESS_SECRET = env.ACCESS_SECRET;
 const ACCESS_EXPIRES: jwt.SignOptions["expiresIn"] = "10m";
 const REFRESH_DAYS = 14;
-const ROOT_EMAIL = "user8474474@gmail.com";
+const ROOT_EMAIL = env.ROOT_EMAIL;
 
 type UserRole = "user" | "admin" | "root";
 
