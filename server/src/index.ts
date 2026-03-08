@@ -977,6 +977,7 @@ export async function start() {
 }
 
 export { app };
+export default app;
 
 let initPromise: Promise<void> | null = null;
 function ensureInitialized(): Promise<void> {
@@ -985,7 +986,12 @@ function ensureInitialized(): Promise<void> {
       await ensureEmailVerificationTables();
       await ensurePasswordResetTables();
       await ensureWeatherHistoryTable();
-      await connectRedis();
+      try {
+        await connectRedis();
+      } catch (err) {
+        // Redis is optional for cache; API should stay available if Redis is down.
+        console.error("Redis init warning:", err);
+      }
     })().catch((err) => {
       initPromise = null;
       throw err;
