@@ -58,6 +58,10 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
+app.get("/", (_req: Request, res: Response) => {
+  res.status(200).json({ message: "Weather API is running" });
+});
+
 const ACCESS_SECRET = env.ACCESS_SECRET;
 const ACCESS_EXPIRES: jwt.SignOptions["expiresIn"] = "10m";
 const REFRESH_DAYS = 14;
