@@ -15,6 +15,7 @@ import { connectRedis } from "./redis";
 import { pool } from "./db";
 import { newRefreshToken, sha256 } from "./tokens";
 import { sendFeedbackEmail, sendPasswordResetEmail, sendVerificationEmail } from "./services/verificationEmail";
+import { userInfo } from "os";
 
 const app = express();
 const weatherApi = new WeatherApi();
@@ -869,6 +870,54 @@ app.get("/api/weather", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
+const WeatherHistorySchema = z.object({
+  userId: z.uuid()
+})
+
+const DeleteWeatherResultSchema = z.object({
+  userId: z.uuid(),
+  weatherResultId: z.coerce.number().int().positive()
+})
+
+// If the user is requesting the history of another user, they have to be root, otherwise they are unauthorized
+// app.get("/api/weather/history/:userId", requireAuth, async (req: Request, res: Response) => {
+//   try {
+//     const parsedUser = parseOrBadRequest(WeatherHistorySchema, req.params as {
+//       userId: string
+//     });
+
+//     const authed = req as AuthedRequest;
+
+//     if(authed.user.role !== 'root' && authed.user.sub !== parsedUser.userId) {
+//       return res.sendStatus(401);
+//     }
+
+//     const result = await pool.query<{
+//       id: string;
+//       requested_at: Date;
+//       result: unknown;
+//     }>(
+//       `select id, requested_at, result
+//        from weather_history
+//        where user_id = $1
+//        order by requested_at desc
+//        limit 100`,
+//       [parsedUser.userId]
+//     );
+
+//     return res.json(
+//       result.rows.map((row) => ({
+//         id: row.id,
+//         requestedAt: row.requested_at,
+//         result: row.result,
+//       }))
+//     );
+//   } catch (err) {
+//     console.error(err);
+//     return res.status(500).json({ error: "Server error" });
+//   }
+// });
+
 app.get("/api/weather/history", requireAuth, async (req: Request, res: Response) => {
   try {
     const result = await pool.query<{
@@ -890,6 +939,51 @@ app.get("/api/weather/history", requireAuth, async (req: Request, res: Response)
         requestedAt: row.requested_at,
         result: row.result,
       }))
+    );
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.get("/api/admin/users/:userId/history", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { userId } = parseOrBadRequest(WeatherHistorySchema, req.params);
+    const result = await pool.query<{
+      id: string;
+      requested_at: Date;
+      result: unknown;
+    }>(
+      `select id, requested_at, result
+       from weather_history
+       where user_id = $1
+       order by requested_at desc
+       limit 100`,
+      [userId]
+    );
+
+    return res.json(
+      result.rows.map((row) => ({
+        id: row.id,
+        requestedAt: row.requested_at,
+        result: row.result,
+      }))
+    );
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.delete("/api/admin/users/:userId/history/:weatherResultId", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { userId, weatherResultId } = parseOrBadRequest(DeleteWeatherResultSchema, req.params);
+    const result = await pool.query(
+      `delete 
+       from weather_history
+       where user_id = $1 and id = $2
+       `,
+      [userId, weatherResultId]
     );
   } catch (err) {
     console.error(err);

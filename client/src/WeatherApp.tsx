@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { apiFetch } from "./auth/api";
-import { getAccessToken } from "./auth/authStore";
+import { isAdminUser } from "./auth/authStore";
 
 type Units = "metric" | "imperial";
 
@@ -37,19 +37,7 @@ function getWeatherIcon(iconCode?: string, condition?: string): string {
   return "🌡️";
 }
 
-function isAdminUser(): boolean {
-  const token = getAccessToken();
-  if (!token) return false;
-  const [, payload] = token.split(".");
-  if (!payload) return false;
-  try {
-    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const json = JSON.parse(atob(b64)) as { role?: string };
-    return json.role === "admin" || json.role === "root";
-  } catch {
-    return false;
-  }
-}
+
 
 export default function WeatherApp() {
   const [city, setCity] = useState<string>("");

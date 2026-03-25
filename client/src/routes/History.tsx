@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
+import { isAdminUser, getCurrentUserId } from "../auth/authStore";
 import { apiFetch } from "../auth/api";
+import { useSearchParams } from "react-router-dom";
 
 type HistoryItem = {
   id: string;
@@ -40,10 +42,40 @@ function getWeatherIcon(iconCode?: string, condition?: string): string {
   return "🌡️";
 }
 
+
+
 export default function History() {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [searchParams] = useSearchParams();
+
+  const userId = searchParams.get('userId');
+  const email = searchParams.get('email');
+  const myUserId = getCurrentUserId();
+  const isAdmin = isAdminUser();
+  const viewingOtherUser = !!userId && isAdmin && userId !== myUserId;
+  const subtitle = viewingOtherUser ? `${email ?? "This user"}'s latest 100 weather requests.` : "Your latest 100 weather requests";
+
+  async function deleteHistoryResult(resultId: string) {
+    try {
+      if (!viewingOtherUser || !userId) {
+        return;
+      }
+
+      await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/history/${encodeURIComponent(resultId)}`, {
+        method: 'DELETE'
+      });
+
+      setItems((items) => items.filter(i => i.id !== resultId));
+    }
+    catch(error) {
+      console.log(error);
+    }
+
+
+
+  }
 
   useEffect(() => {
     async function loadHistory() {
@@ -51,7 +83,15 @@ export default function History() {
       setError("");
 
       try {
-        const res = await apiFetch("/api/weather/history");
+        let res;
+
+        if(viewingOtherUser) {
+          res = await apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/history`);
+        }
+        else {
+          res = await apiFetch('/api/weather/history');
+        }
+
         const data: unknown = await res.json().catch(() => []);
 
         if (!res.ok) {
@@ -79,7 +119,7 @@ export default function History() {
     }
 
     void loadHistory();
-  }, []);
+  }, [userId, viewingOtherUser, myUserId]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -91,7 +131,7 @@ export default function History() {
                 Weather history
               </h1>
               <p className="mt-2 text-sm text-slate-300">
-                Your latest 100 weather requests.
+                {subtitle}
               </p>
             </div>
 
@@ -132,6 +172,12 @@ export default function History() {
                       {typeof item.result.feelsLike === "number" ? Math.round(item.result.feelsLike) : "N/A"} |
                       Condition: {getWeatherIcon(item.result.icon, item.result.condition)} {item.result.condition ?? "N/A"}
                     </div>
+                    {isAdminUser() &&
+                      <button className="inline-flex items-center justify-center rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-semibold text-red-200 transition hover:bg-red-500/20 focus:outline-none focus:ring-2 focus:ring-red-500/40 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={async () => deleteHistoryResult(item.id)}
+                      >
+                        Delete
+                    </button>}
                   </article>
                 ))}
               </div>
