@@ -4,6 +4,7 @@ import AppShell from "../ui/AppShell";
 import { apiPostJson } from "../auth/api";
 
 export default function Feedback() {
+  const [email, setEmail] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [message, setMessage] = useState("");
@@ -15,10 +16,16 @@ export default function Feedback() {
     setMessage("");
     setError("");
 
+    if (!email.trim()) {
+      setError("Email is required.");
+      return;
+    }
+
     if (!subject.trim()) {
       setError("Subject is required.");
       return;
     }
+
     if (!body.trim()) {
       setError("Body is required.");
       return;
@@ -27,10 +34,12 @@ export default function Feedback() {
     setIsLoading(true);
     try {
       const res = await apiPostJson<{ message: string }>("/api/feedback", {
+        email: email.trim(),
         subject: subject.trim(),
         body: body.trim(),
       });
       setMessage(res.message);
+      setEmail("");
       setBody("");
       setSubject("");
     } catch (err: unknown) {
@@ -41,8 +50,23 @@ export default function Feedback() {
   };
 
   return (
-    <AppShell title="Feedback" subtitle="Send us feedback directly from your account.">
+    <AppShell title="Feedback" subtitle="Send feedback without creating an account.">
       <form onSubmit={onSubmit} className="space-y-6" noValidate>
+        <div className="space-y-2">
+          <label htmlFor="email" className="text-sm font-medium text-slate-200">
+            Email
+          </label>
+          <input
+            id="email"
+            type="email"
+            maxLength={200}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-slate-100 placeholder:text-slate-400 outline-none transition focus:border-white/20 focus:bg-white/10 focus:ring-2 focus:ring-sky-500/30"
+            placeholder="you@example.com"
+          />
+        </div>
+
         <div className="space-y-2">
           <label htmlFor="subject" className="text-sm font-medium text-slate-200">
             Subject
@@ -73,12 +97,7 @@ export default function Feedback() {
           />
         </div>
 
-        {error ? (
-          <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">
-            {error}
-          </div>
-        ) : null}
-
+        {error ? <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">{error}</div> : null}
         {message ? (
           <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-200">
             {message}
