@@ -2,12 +2,34 @@
 
 Live app: https://weather-app-client-20260325123257.vercel.app/
 
-Users can get the current weather by entering a city and a two-letter state abbreviation.
+## Features
 
-The app supports both metric and imperial units.
+- Gets current weather by city and two-letter state abbreviation
+- Supports metric and imperial units
+- Lets users create an account, log in, and keep account-based weather history
+- Lets guests use the app without an account and keep local history in the browser
+- Lets users send feedback from the app
 
-Weather results are saved in `localStorage` in the browser so recent lookups can be viewed again later.
+## Technologies Used
 
-Users can send feedback using the Feedback button next to the History button.
+- React
+- TypeScript
+- React Router
+- Tailwind CSS
+- Vite
+- Node.js
+- Express
+- PostgreSQL
+- Redis
+- OpenWeatherMap API
+- JWT authentication
+- Zod
+- Vercel
 
-![Weather app screenshot](/image.png)
+Guest home page:
+
+![Guest home page screenshot](/home_page_guest.png)
+
+Logged-in home page:
+
+![Logged-in home page screenshot](/home_page_account.png)

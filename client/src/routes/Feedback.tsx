@@ -1,10 +1,12 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link } from "react-router";
 import AppShell from "../ui/AppShell";
 import { apiPostJson } from "../auth/api";
+import { getTokenClaims } from "../auth/authStore";
 
 export default function Feedback() {
-  const [email, setEmail] = useState("");
+  const accountEmail = useMemo(() => getTokenClaims()?.email ?? "", []);
+  const [email, setEmail] = useState(accountEmail);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [message, setMessage] = useState("");
@@ -20,12 +22,10 @@ export default function Feedback() {
       setError("Email is required.");
       return;
     }
-
     if (!subject.trim()) {
       setError("Subject is required.");
       return;
     }
-
     if (!body.trim()) {
       setError("Body is required.");
       return;
@@ -39,7 +39,6 @@ export default function Feedback() {
         body: body.trim(),
       });
       setMessage(res.message);
-      setEmail("");
       setBody("");
       setSubject("");
     } catch (err: unknown) {
@@ -50,7 +49,10 @@ export default function Feedback() {
   };
 
   return (
-    <AppShell title="Feedback" subtitle="Send feedback without creating an account.">
+    <AppShell
+      title="Feedback"
+      subtitle={accountEmail ? "Send feedback from your account." : "Send feedback as a guest or with an account."}
+    >
       <form onSubmit={onSubmit} className="space-y-6" noValidate>
         <div className="space-y-2">
           <label htmlFor="email" className="text-sm font-medium text-slate-200">

@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { apiFetch } from "./auth/api";
+import { getTokenClaims, isAdminUser, setAccessToken } from "./auth/authStore";
 import { appendWeatherHistory } from "./lib/localWeatherHistory";
 import { getWeatherIcon } from "./lib/weather";
 
@@ -25,8 +26,33 @@ export default function WeatherApp() {
   const [resultText, setResultText] = useState("");
   const [conditionText, setConditionText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [viewerEmail, setViewerEmail] = useState<string | null>(getTokenClaims()?.email ?? null);
 
   const tempUnit = useMemo(() => (units === "imperial" ? "\u00B0F" : "\u00B0C"), [units]);
+  const showUsersButton = useMemo(() => isAdminUser(), [viewerEmail]);
+
+  useEffect(() => {
+    (async () => {
+      if (getTokenClaims()) {
+        setViewerEmail(getTokenClaims()?.email ?? null);
+        return;
+      }
+
+      try {
+        const res = await apiFetch("/auth/refresh", { method: "POST" });
+        if (!res.ok) {
+          setViewerEmail(null);
+          return;
+        }
+
+        const data = (await res.json()) as { accessToken: string };
+        setAccessToken(data.accessToken);
+        setViewerEmail(getTokenClaims()?.email ?? null);
+      } catch {
+        setViewerEmail(null);
+      }
+    })();
+  }, []);
 
   const validateInputs = () => {
     const trimmedCity = city.trim();
@@ -105,7 +131,10 @@ export default function WeatherApp() {
 
       setResultText(`${roundedTemp}${tempUnit} (feels like ${roundedFeelsLike}${tempUnit})`);
       setConditionText(`${weatherIcon} ${weather.condition ?? ""}`.trim());
-      appendWeatherHistory(weather);
+
+      if (!getTokenClaims()) {
+        appendWeatherHistory(weather);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Something went wrong.";
       setResultText(msg);
@@ -125,9 +154,44 @@ export default function WeatherApp() {
               <p className="mt-2 text-sm text-slate-300">
                 Check the current weather by city and state.
               </p>
+              <p className="mt-1 text-xs text-slate-400">
+                {viewerEmail ? `Signed in as ${viewerEmail}` : "Use the app as a guest or sign in to save account history."}
+              </p>
             </div>
 
             <div className="flex items-center gap-2">
+              {viewerEmail ? (
+                <>
+                  <Link
+                    to="/account-settings"
+                    className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                  >
+                    Account
+                  </Link>
+                  <Link
+                    to="/logout"
+                    className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                  >
+                    Log out
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <Link
+                    to="/login"
+                    className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                  >
+                    Register
+                  </Link>
+                </>
+              )}
+
               <Link
                 to="/feedback"
                 className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
@@ -140,6 +204,14 @@ export default function WeatherApp() {
               >
                 History
               </Link>
+              {showUsersButton ? (
+                <Link
+                  to="/users"
+                  className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
+                >
+                  Users
+                </Link>
+              ) : null}
             </div>
           </div>
 
