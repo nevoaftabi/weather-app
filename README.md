@@ -1,6 +1,6 @@
 # Weather App
 
-Live app: https://weather-app-client-20260325123257.vercel.app/
+Live frontend: https://weather-app-client-20260325123257.vercel.app/
 
 ## Features
 
